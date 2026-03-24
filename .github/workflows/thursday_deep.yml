@@ -1,0 +1,47 @@
+name: Thursday Deep Post - 今週の見どころ（木曜20:00 JST）
+
+on:
+  schedule:
+    # 毎週木曜 20:00 JST = 11:00 UTC
+    - cron: '0 11 * * 4'
+  workflow_dispatch:
+
+jobs:
+  post-thursday-deep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create output directories
+        run: mkdir -p output/logs
+
+      - name: Run Thursday deep post script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+          WEEKLY_NOTE_URL: ${{ vars.WEEKLY_NOTE_URL }}
+          LOG_LEVEL: INFO
+        run: python scripts/run_thursday.py
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thursday-logs-${{ github.run_number }}
+          path: output/logs/
+          retention-days: 7

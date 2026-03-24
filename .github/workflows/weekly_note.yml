@@ -1,0 +1,92 @@
+name: Weekly Note - 12星座週間運勢投稿（毎週月曜7:30 JST）
+
+on:
+  schedule:
+    # 毎週月曜 7:30 JST = 22:30 UTC（前日日曜）
+    - cron: '30 22 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (生成のみ、投稿しない)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  post-weekly-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright and browsers
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Download Japanese font
+        run: |
+          mkdir -p assets/fonts
+          curl -L -o assets/fonts/NotoSansJP-Regular.ttf \
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf" \
+            2>/dev/null || echo "Font download skipped"
+
+      - name: Create output directories
+        run: mkdir -p output/images output/logs output/content
+
+      - name: Run weekly note script
+        id: weekly_post
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          LOG_LEVEL: INFO
+        run: python scripts/run_weekly.py
+
+      - name: Update WEEKLY_NOTE_URL repository variable
+        if: steps.weekly_post.outputs.weekly_note_url != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const url = '${{ steps.weekly_post.outputs.weekly_note_url }}';
+            if (url && url.startsWith('https://')) {
+              try {
+                await github.rest.actions.updateRepoVariable({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'WEEKLY_NOTE_URL',
+                  value: url
+                });
+                console.log('WEEKLY_NOTE_URL updated:', url);
+              } catch (e) {
+                // 変数が存在しない場合は新規作成
+                await github.rest.actions.createRepoVariable({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'WEEKLY_NOTE_URL',
+                  value: url
+                });
+                console.log('WEEKLY_NOTE_URL created:', url);
+              }
+            }
+
+      - name: Upload generated images and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-output-${{ github.run_number }}
+          path: |
+            output/images/
+            output/logs/
+          retention-days: 14

@@ -1,0 +1,57 @@
+name: Monthly Note - 12星座プレミアム月次鑑定（毎月1日9:00 JST）
+
+on:
+  schedule:
+    # 毎月1日 9:00 JST = 0:00 UTC
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+jobs:
+  post-monthly-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright and browsers
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Download Japanese font
+        run: |
+          mkdir -p assets/fonts
+          curl -L -o assets/fonts/NotoSansJP-Regular.ttf \
+            "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf" \
+            2>/dev/null || echo "Font download skipped"
+
+      - name: Create output directories
+        run: mkdir -p output/images output/logs output/content
+
+      - name: Run monthly note script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          LOG_LEVEL: INFO
+        run: python scripts/run_monthly.py
+
+      - name: Upload output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-output-${{ github.run_number }}
+          path: |
+            output/images/
+            output/logs/
+          retention-days: 30

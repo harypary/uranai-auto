@@ -1,0 +1,37 @@
+# 環境変数（絶対にコミットしない）
+.env
+*.env
+
+# 出力ファイル（生成物・ログ）
+output/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 仮想環境
+venv/
+.venv/
+env/
+
+# フォント（著作権の問題がある場合）
+assets/fonts/*.ttf
+assets/fonts/*.otf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db

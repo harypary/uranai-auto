@@ -1,0 +1,15 @@
+# AI コンテンツ生成（新SDK）
+google-genai>=1.0.0
+
+# ブラウザ自動化（note.com 投稿）
+playwright==1.49.0
+
+# Twitter/X 投稿
+tweepy==4.15.0
+
+# 画像生成
+Pillow==11.0.0
+numpy==2.1.3
+
+# 環境変数管理
+python-dotenv==1.0.1

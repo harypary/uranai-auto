@@ -1,0 +1,128 @@
+"""12星座の定数データ"""
+
+ZODIAC_SIGNS = [
+    {
+        "name": "牡羊座",
+        "en": "aries",
+        "symbol": "♈",
+        "period": "3/21〜4/19",
+        "element": "火",
+        "ruling_planet": "火星",
+        "keywords": ["情熱", "行動力", "開拓精神"],
+    },
+    {
+        "name": "牡牛座",
+        "en": "taurus",
+        "symbol": "♉",
+        "period": "4/20〜5/20",
+        "element": "地",
+        "ruling_planet": "金星",
+        "keywords": ["安定", "忍耐", "感覚美"],
+    },
+    {
+        "name": "双子座",
+        "en": "gemini",
+        "symbol": "♊",
+        "period": "5/21〜6/21",
+        "element": "風",
+        "ruling_planet": "水星",
+        "keywords": ["好奇心", "知性", "コミュニケーション"],
+    },
+    {
+        "name": "蟹座",
+        "en": "cancer",
+        "symbol": "♋",
+        "period": "6/22〜7/22",
+        "element": "水",
+        "ruling_planet": "月",
+        "keywords": ["感受性", "家族愛", "守護"],
+    },
+    {
+        "name": "獅子座",
+        "en": "leo",
+        "symbol": "♌",
+        "period": "7/23〜8/22",
+        "element": "火",
+        "ruling_planet": "太陽",
+        "keywords": ["カリスマ", "創造性", "誇り"],
+    },
+    {
+        "name": "乙女座",
+        "en": "virgo",
+        "symbol": "♍",
+        "period": "8/23〜9/22",
+        "element": "地",
+        "ruling_planet": "水星",
+        "keywords": ["分析力", "完璧主義", "奉仕"],
+    },
+    {
+        "name": "天秤座",
+        "en": "libra",
+        "symbol": "♎",
+        "period": "9/23〜10/23",
+        "element": "風",
+        "ruling_planet": "金星",
+        "keywords": ["調和", "美意識", "公平"],
+    },
+    {
+        "name": "蠍座",
+        "en": "scorpio",
+        "symbol": "♏",
+        "period": "10/24〜11/22",
+        "element": "水",
+        "ruling_planet": "冥王星",
+        "keywords": ["深層心理", "変容", "執念"],
+    },
+    {
+        "name": "射手座",
+        "en": "sagittarius",
+        "symbol": "♐",
+        "period": "11/23〜12/21",
+        "element": "火",
+        "ruling_planet": "木星",
+        "keywords": ["自由", "哲学", "冒険"],
+    },
+    {
+        "name": "山羊座",
+        "en": "capricorn",
+        "symbol": "♑",
+        "period": "12/22〜1/19",
+        "element": "地",
+        "ruling_planet": "土星",
+        "keywords": ["責任感", "野心", "現実主義"],
+    },
+    {
+        "name": "水瓶座",
+        "en": "aquarius",
+        "symbol": "♒",
+        "period": "1/20〜2/18",
+        "element": "風",
+        "ruling_planet": "天王星",
+        "keywords": ["独創性", "人道主義", "革新"],
+    },
+    {
+        "name": "魚座",
+        "en": "pisces",
+        "symbol": "♓",
+        "period": "2/19〜3/20",
+        "element": "水",
+        "ruling_planet": "海王星",
+        "keywords": ["直感", "霊性", "共感"],
+    },
+]
+
+# エレメント別グラデーション色（RGB）
+ELEMENT_COLORS = {
+    "火": {"bg_start": (200, 60, 20),  "bg_end": (100, 15, 10)},
+    "地": {"bg_start": (60, 120, 40),  "bg_end": (20, 60, 15)},
+    "風": {"bg_start": (40, 130, 200), "bg_end": (15, 60, 140)},
+    "水": {"bg_start": (50, 80, 180),  "bg_end": (20, 30, 110)},
+}
+
+# エレメント別アクセントカラー
+ELEMENT_ACCENT = {
+    "火": (255, 200, 100),
+    "地": (200, 255, 150),
+    "風": (200, 240, 255),
+    "水": (180, 200, 255),
+}
