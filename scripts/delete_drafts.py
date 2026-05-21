@@ -48,14 +48,14 @@ def load_session() -> dict:
 
 
 def fetch_all_drafts(page) -> list[dict]:
-    """note.com API で全下書きを取得"""
-    all_drafts = []
+    """note.com API で全下書きを取得（note_list/contents エンドポイント使用）"""
+    all_notes = []
     p = 1
     while True:
         result = page.evaluate(f"""
             async () => {{
                 const r = await fetch(
-                    'https://note.com/api/v2/creators/{NOTE_USER_ID}/notes?status=draft&page={p}&per_page=50',
+                    'https://note.com/api/v2/note_list/contents?page={p}&per_page=50',
                     {{credentials: 'include'}}
                 );
                 if (!r.ok) return null;
@@ -67,50 +67,31 @@ def fetch_all_drafts(page) -> list[dict]:
         notes = result.get("data", {}).get("notes", [])
         if not notes:
             break
-        all_drafts.extend(notes)
-        # 次ページがなければ終了
-        total_count = result.get("data", {}).get("totalCount", 0)
-        if len(all_drafts) >= total_count:
+        all_notes.extend(notes)
+        is_last = result.get("data", {}).get("isLastPage", True)
+        if is_last:
             break
         p += 1
-    return all_drafts
+    # status == 'draft' のみ返す
+    return [n for n in all_notes if n.get("status") == "draft"]
 
 
 def delete_note(page, note_id: str) -> bool:
-    """note.com API で1件削除"""
+    """note.com API で1件削除（正しいエンドポイント: /api/v1/notes/n/{key}）"""
     result = page.evaluate(f"""
         async () => {{
-            // CSRF トークンを取得
-            let token = '';
-            const meta = document.querySelector('meta[name="csrf-token"]');
-            if (meta) token = meta.getAttribute('content');
-
-            const r = await fetch('https://note.com/api/v3/notes/{note_id}', {{
+            const r = await fetch('https://note.com/api/v1/notes/n/{note_id}', {{
                 method: 'DELETE',
                 credentials: 'include',
                 headers: {{
-                    'Content-Type': 'application/json',
-                    'X-CSRF-Token': token,
                     'X-Requested-With': 'XMLHttpRequest',
+                    'Accept': 'application/json, text/plain, */*',
                 }}
             }});
             return {{ok: r.ok, status: r.status}};
         }}
     """)
-    if result and result.get("ok"):
-        return True
-    # フォールバック: v2 API
-    result2 = page.evaluate(f"""
-        async () => {{
-            const r = await fetch('https://note.com/api/v2/notes/{note_id}', {{
-                method: 'DELETE',
-                credentials: 'include',
-                headers: {{'X-Requested-With': 'XMLHttpRequest'}}
-            }});
-            return {{ok: r.ok, status: r.status}};
-        }}
-    """)
-    return bool(result2 and result2.get("ok"))
+    return bool(result and result.get("ok"))
 
 
 def main():
@@ -139,19 +120,26 @@ def main():
         page = context.new_page()
         page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-        # note.com にアクセスしてセッション確立
-        page.goto("https://note.com", wait_until="networkidle", timeout=30000)
+        # note.com 管理ページにアクセスしてセッション確立
+        page.goto("https://note.com/notes", wait_until="networkidle", timeout=30000)
         time.sleep(2)
 
         logger.info("下書き一覧を取得中...")
         drafts = fetch_all_drafts(page)
+
+        # エディタページに移動してアクセストークンを確立（DELETE API が通るようになる）
+        if drafts:
+            first_id = drafts[0].get("key", "") or str(drafts[0].get("id", ""))
+            page.goto(f"https://editor.note.com/notes/{first_id}/edit/", wait_until="networkidle", timeout=30000)
+            time.sleep(3)
+            logger.info("エディタページでアクセストークン確立完了")
         logger.info(f"下書き総数: {len(drafts)}件")
 
         # 削除対象と保持対象を分類
         to_delete = []
         to_keep = []
         for d in drafts:
-            note_id = d.get("id", "") or d.get("key", "")
+            note_id = d.get("key", "") or str(d.get("id", ""))
             title = d.get("name", "") or d.get("title", "")
             if note_id in NUMEROLOGY_NOTE_IDS:
                 to_keep.append((note_id, title))
@@ -165,7 +153,7 @@ def main():
 
         print(f"\n削除する下書き（占い記事）: {len(to_delete)}件")
         for note_id, title in to_delete:
-            print(f"  🗑  {note_id}: {title[:40]}")
+            print(f"  [DEL] {note_id}: {title[:40]}")
         print(f"{'='*50}\n")
 
         if args.dry_run:
