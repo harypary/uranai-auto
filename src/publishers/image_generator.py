@@ -106,6 +106,38 @@ def _add_decorative_circle(draw: ImageDraw.Draw, accent_color: Tuple):
 class CoverImageGenerator:
     """noteカバー画像の自動生成"""
 
+    def generate_daily(
+        self,
+        sign: dict,
+        date_str: str,
+        output_path: str,
+    ) -> str:
+        """日次運勢カバー画像を生成"""
+        colors = ELEMENT_COLORS[sign["element"]]
+        accent = ELEMENT_ACCENT[sign["element"]]
+
+        img = _create_gradient(colors["bg_start"], colors["bg_end"])
+        draw = ImageDraw.Draw(img)
+
+        _add_stars(draw, 70, seed=hash(sign["en"] + date_str) % 1000)
+        _add_decorative_circle(draw, accent)
+
+        symbol_font = _load_font(120)
+        draw.text((WIDTH // 2, 200), sign["symbol"], font=symbol_font, fill=(255, 255, 255), anchor="mm")
+
+        name_font = _load_font(62, bold=True)
+        draw.text((WIDTH // 2, 340), f"{sign['name']} 今日の運勢", font=name_font, fill=(255, 255, 255), anchor="mm")
+
+        period_font = _load_font(34)
+        draw.text((WIDTH // 2, 415), date_str, font=period_font, fill=accent, anchor="mm")
+
+        _add_bottom_banner(draw, "今日の詳細鑑定 ¥300", accent)
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path, "PNG", optimize=True)
+        logger.info(f"日次カバー画像生成: {output_path}")
+        return output_path
+
     def generate_weekly(
         self,
         sign: dict,

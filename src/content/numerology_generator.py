@@ -11,6 +11,18 @@ logger = get_logger("numerology_generator")
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 PAID_BOUNDARY = "---PAID_BOUNDARY---"
+STRATEGY_FILE = Path(__file__).parent.parent.parent / "output" / "strategy" / "current_strategy.txt"
+
+
+def _load_strategy() -> str:
+    try:
+        if STRATEGY_FILE.exists():
+            text = STRATEGY_FILE.read_text(encoding="utf-8").strip()
+            if text:
+                return f"【過去の販売データから導いた戦略】\n{text}\n"
+    except Exception:
+        pass
+    return ""
 
 
 class NumerologyGenerator:
@@ -31,6 +43,7 @@ class NumerologyGenerator:
             number_summary=info["summary"],
             lucky_color=info["color"],
             lucky_stone=info["stone"],
+            strategy_context=_load_strategy(),
         )
 
         raw = self._client.generate(prompt, max_tokens=8192, temperature=0.82)

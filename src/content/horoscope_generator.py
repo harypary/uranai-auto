@@ -13,6 +13,9 @@ logger = get_logger("horoscope_generator")
 
 PROMPT_DIR = Path(__file__).parent / "prompts"
 PAID_BOUNDARY = "---PAID_BOUNDARY---"
+STRATEGY_FILE = Path(__file__).parent.parent.parent / "output" / "strategy" / "current_strategy.txt"
+
+WEEKDAY_JP = ["月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"]
 
 # 引き込むタイトルワード（調査データに基づく）
 WEEKLY_TITLE_PATTERNS = [
@@ -53,6 +56,16 @@ def _load_prompt(filename: str) -> str:
     return (PROMPT_DIR / filename).read_text(encoding="utf-8")
 
 
+def _load_strategy() -> str:
+    """パフォーマンス分析から生成された戦略コンテキストを読み込む"""
+    if STRATEGY_FILE.exists():
+        try:
+            return STRATEGY_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    return ""
+
+
 def _random_stars(min_val: int = 2, max_val: int = 5) -> str:
     n = random.randint(min_val, max_val)
     return "★" * n + "☆" * (5 - n)
@@ -82,14 +95,41 @@ def generate_monthly_title(sign: dict, month_str: str) -> str:
     return title
 
 
+DAILY_TITLE_PATTERNS = [
+    "【{sign}】{date}の運勢｜{angle}",
+    "{sign}さんへ。今日（{date}）の正直な運勢",
+    "【{sign}・{date}】当たりすぎ注意の今日の占い",
+    "【保存版】{sign}の{date}｜{angle}",
+    "{sign}の今日（{date}）｜{angle}",
+]
+
+DAILY_ANGLE_WORDS = [
+    "恋愛・仕事・金運の全真実",
+    "今日あなたに起きること",
+    "パワータイムはいつ？完全鑑定",
+    "今日動くべき時間と避ける時間",
+    "今日の運命的な転機を読む",
+]
+
+
+def generate_daily_title(sign: dict, date_str: str) -> str:
+    """日次記事のタイトルを生成"""
+    pattern = random.choice(DAILY_TITLE_PATTERNS)
+    angle = random.choice(DAILY_ANGLE_WORDS)
+    return pattern.format(sign=sign["name"], date=date_str, angle=angle)
+
+
 class HoroscopeGenerator:
     def __init__(self, client: GeminiClient):
         self._client = client
 
-    def generate_daily(self, sign: dict, target_date: date = None) -> str:
-        """日次占い（X投稿用・110〜130文字）"""
+    def generate_daily(self, sign: dict, target_date: date = None) -> Tuple[str, str]:
+        """日次占い（note投稿用・300円）→ (ティーザー, 有料コンテンツ) を返す"""
         if target_date is None:
             target_date = date.today()
+
+        strategy = _load_strategy()
+        strategy_context = f"\n【今週の改善戦略（分析データに基づく）】\n{strategy}\n" if strategy else ""
 
         prompt_template = _load_prompt("daily_horoscope.txt")
         prompt = prompt_template.format(
@@ -100,11 +140,21 @@ class HoroscopeGenerator:
             ruling_planet=sign["ruling_planet"],
             keywords="・".join(sign["keywords"]),
             date_str=get_date_str(target_date),
+            weekday=WEEKDAY_JP[target_date.weekday()],
+            love_stars=_random_stars(2, 5),
+            work_stars=_random_stars(2, 5),
+            money_stars=_random_stars(2, 5),
+            overall_stars=_random_stars(3, 5),
+            strategy_context=strategy_context,
         )
 
-        content = self._client.generate(prompt, max_tokens=512, temperature=0.90)
-        logger.info(f"[日次] {sign['name']} 生成完了: {len(content)}文字")
-        return content
+        raw = self._client.generate(prompt, max_tokens=3072, temperature=0.88)
+        teaser, paid = _split_content(raw)
+        logger.info(
+            f"[日次] {sign['name']} 生成完了: "
+            f"ティーザー{len(teaser)}文字 / 有料{len(paid)}文字"
+        )
+        return teaser, paid
 
     def generate_weekly(
         self,
@@ -115,6 +165,9 @@ class HoroscopeGenerator:
         """週次占い → (ティーザー, 有料コンテンツ) を返す"""
         week_range = get_week_range_str(week_start, week_end)
         week_label = get_week_label(week_start)
+
+        strategy = _load_strategy()
+        strategy_context = f"\n【今週の改善戦略（分析データに基づく）】\n{strategy}\n" if strategy else ""
 
         prompt_template = _load_prompt("weekly_horoscope.txt")
         prompt = prompt_template.format(
@@ -131,6 +184,7 @@ class HoroscopeGenerator:
             work_stars=_random_stars(2, 5),
             money_stars=_random_stars(2, 5),
             overall_stars=_random_stars(3, 5),
+            strategy_context=strategy_context,
         )
 
         raw = self._client.generate(prompt, max_tokens=4096, temperature=0.87)
@@ -163,6 +217,9 @@ class HoroscopeGenerator:
         week2_end = min(14, month_end.day)
         week3_end = min(21, month_end.day)
 
+        strategy = _load_strategy()
+        strategy_context = f"\n【今月の改善戦略（分析データに基づく）】\n{strategy}\n" if strategy else ""
+
         prompt_template = _load_prompt("monthly_horoscope.txt")
         prompt = prompt_template.format(
             sign_name=sign["name"],
@@ -180,9 +237,10 @@ class HoroscopeGenerator:
             week1_end=week1_end,
             week2_end=week2_end,
             week3_end=week3_end,
+            strategy_context=strategy_context,
         )
 
-        raw = self._client.generate(prompt, max_tokens=8192, temperature=0.85)
+        raw = self._client.generate(prompt, max_tokens=16384, temperature=0.85)
         teaser, paid = _split_content(raw)
         logger.info(
             f"[月次] {sign['name']} 生成完了: "

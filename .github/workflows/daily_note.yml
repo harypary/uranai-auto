@@ -1,9 +1,9 @@
-name: Weekly Note - 12星座週間運勢投稿（毎週月曜7:30 JST）
+name: Daily Note - 12星座今日の運勢投稿（毎日7:00 JST）
 
 on:
   schedule:
-    # 毎週月曜 7:30 JST = 22:30 UTC（前日日曜）
-    - cron: '30 22 * * 0'
+    # 毎日 7:00 JST = 22:00 UTC（前日）
+    - cron: '0 22 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -13,7 +13,7 @@ on:
         type: boolean
 
 jobs:
-  post-weekly-note:
+  post-daily-note:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -53,14 +53,13 @@ jobs:
           restore-keys: |
             strategy-
 
-      - name: Run weekly note script
-        id: weekly_post
+      - name: Run daily note script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
           NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
           LOG_LEVEL: INFO
-        run: python scripts/run_weekly.py
+        run: python scripts/run_daily.py
 
       - name: Analyze performance & update strategy
         env:
@@ -75,40 +74,14 @@ jobs:
           path: output/strategy/current_strategy.txt
           key: strategy-${{ github.run_id }}
 
-      - name: Update WEEKLY_NOTE_URL repository variable
-        if: steps.weekly_post.outputs.weekly_note_url != ''
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const url = '${{ steps.weekly_post.outputs.weekly_note_url }}';
-            if (url && url.startsWith('https://')) {
-              try {
-                await github.rest.actions.updateRepoVariable({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'WEEKLY_NOTE_URL',
-                  value: url
-                });
-                console.log('WEEKLY_NOTE_URL updated:', url);
-              } catch (e) {
-                // 変数が存在しない場合は新規作成
-                await github.rest.actions.createRepoVariable({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'WEEKLY_NOTE_URL',
-                  value: url
-                });
-                console.log('WEEKLY_NOTE_URL created:', url);
-              }
-            }
-
-      - name: Upload generated images and logs
+      - name: Upload output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-output-${{ github.run_number }}
+          name: daily-output-${{ github.run_number }}
           path: |
             output/images/
             output/logs/
-          retention-days: 14
+            output/stats/
+            output/strategy/
+          retention-days: 7

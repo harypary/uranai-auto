@@ -37,14 +37,36 @@ jobs:
             2>/dev/null || echo "Font download skipped"
 
       - name: Create output directories
-        run: mkdir -p output/images output/logs output/content
+        run: mkdir -p output/images output/logs output/content output/stats output/strategy
+
+      - name: Restore strategy file from cache
+        uses: actions/cache@v4
+        with:
+          path: output/strategy/current_strategy.txt
+          key: strategy-${{ github.run_id }}
+          restore-keys: |
+            strategy-
 
       - name: Run monthly note script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
           LOG_LEVEL: INFO
         run: python scripts/run_monthly.py
+
+      - name: Analyze performance & update strategy
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+        run: python scripts/analyze_performance.py
+
+      - name: Save strategy to cache
+        uses: actions/cache@v4
+        with:
+          path: output/strategy/current_strategy.txt
+          key: strategy-${{ github.run_id }}
 
       - name: Upload output
         if: always()
@@ -54,4 +76,6 @@ jobs:
           path: |
             output/images/
             output/logs/
+            output/stats/
+            output/strategy/
           retention-days: 30
