@@ -2,7 +2,8 @@ name: Monthly Note - 12星座プレミアム月次鑑定（毎月1日9:00 JST）
 
 on:
   schedule:
-    - cron: '0 0 1 * *'   # 毎月1日 9:00 JST = 0:00 UTC
+    - cron: '0 0 1 * *'   # 毎月1日 9:00 JST（主）
+    - cron: '0 2 1 * *'   # 毎月1日 11:00 JST（バックアップ）
   workflow_dispatch:
 
 jobs:

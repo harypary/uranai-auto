@@ -2,7 +2,8 @@ name: Weekly Note - 12星座週間運勢投稿（毎週月曜7:30 JST）
 
 on:
   schedule:
-    - cron: '30 22 * * 0'   # 毎週月曜 7:30 JST = 22:30 UTC（前日日曜）
+    - cron: '30 22 * * 0'   # 月曜 7:30 JST（主）
+    - cron: '30 23 * * 0'   # 月曜 8:30 JST（バックアップ）
   workflow_dispatch:
 
 jobs:
