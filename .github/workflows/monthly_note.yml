@@ -45,6 +45,13 @@ jobs:
           key: strategy-${{ github.run_id }}
           restore-keys: strategy-
 
+      - name: Restore post log from cache
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ github.run_id }}
+          restore-keys: post-log-
+
       # ── セッション検証 ──────────────────────────────────────────
       - name: Validate note.com session
         id: session_check
@@ -118,6 +125,13 @@ jobs:
         with:
           path: output/strategy/current_strategy.txt
           key: strategy-${{ github.run_id }}
+
+      - name: Save post log to cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ github.run_id }}
 
       - name: Upload output artifacts
         if: always()
