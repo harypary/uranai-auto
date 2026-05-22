@@ -88,10 +88,10 @@ class NotePublisher:
         import re
         logger.info(f"下書き公開開始: {draft_url}")
         page.goto(draft_url, wait_until="networkidle", timeout=30000)
-        _wait(4)
+        _wait(5)
 
-        # 「複数画面で編集」ダイアログを閉じる
-        for sel in ['button:has-text("今は保存しない")', 'button:has-text("このまま編集")', 'button:has-text("閉じる")']:
+        # 「複数画面で編集」ダイアログのみ閉じる（_dismiss_modals は React を壊すため使わない）
+        for sel in ['button:has-text("今は保存しない")', 'button:has-text("このまま編集")']:
             try:
                 btn = page.query_selector(sel)
                 if btn and btn.is_visible():
@@ -101,15 +101,21 @@ class NotePublisher:
             except Exception:
                 pass
 
-        self._dismiss_modals(page)
-
         # 「公開に進む」クリック
-        try:
-            page.click('button:has-text("公開に進む")', timeout=8000)
-            _wait(6)
-        except Exception as e:
-            logger.error(f"「公開に進む」失敗: {e}")
-            return page.url
+        clicked = False
+        for attempt in range(3):
+            try:
+                page.wait_for_selector('button:has-text("公開に進む")', timeout=12000)
+                page.click('button:has-text("公開に進む")', timeout=8000)
+                _wait(6)
+                clicked = True
+                break
+            except Exception as e:
+                logger.warning(f"「公開に進む」attempt {attempt+1} 失敗: {e}")
+                _wait(5)
+        if not clicked:
+            logger.error("「公開に進む」3回とも失敗 → スキップ")
+            raise RuntimeError("publish_draft: 公開に進むボタンを押せませんでした")
 
         # ハッシュタグ
         if hashtags:
