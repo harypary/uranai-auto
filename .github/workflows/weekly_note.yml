@@ -2,15 +2,8 @@ name: Weekly Note - 12星座週間運勢投稿（毎週月曜7:30 JST）
 
 on:
   schedule:
-    # 毎週月曜 7:30 JST = 22:30 UTC（前日日曜）
-    - cron: '30 22 * * 0'
+    - cron: '30 22 * * 0'   # 毎週月曜 7:30 JST = 22:30 UTC（前日日曜）
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: 'Dry run (生成のみ、投稿しない)'
-        required: false
-        default: 'false'
-        type: boolean
 
 jobs:
   post-weekly-note:
@@ -38,72 +31,116 @@ jobs:
       - name: Download Japanese font
         run: |
           mkdir -p assets/fonts
-          curl -L -o assets/fonts/NotoSansJP-Regular.ttf \
+          curl -sL -o assets/fonts/NotoSansJP-Regular.ttf \
             "https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf" \
-            2>/dev/null || echo "Font download skipped"
+            || echo "Font download skipped"
 
       - name: Create output directories
-        run: mkdir -p output/images output/logs output/content output/stats output/strategy
+        run: mkdir -p output/images output/logs output/stats output/strategy
 
       - name: Restore strategy file from cache
         uses: actions/cache@v4
         with:
           path: output/strategy/current_strategy.txt
           key: strategy-${{ github.run_id }}
-          restore-keys: |
-            strategy-
+          restore-keys: strategy-
 
-      - name: Run weekly note script
-        id: weekly_post
+      # ── セッション検証 ──────────────────────────────────────────
+      - name: Validate note.com session
+        id: session_check
+        env:
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+        run: |
+          python scripts/check_session.py && echo "session_ok=true" >> $GITHUB_OUTPUT \
+            || echo "session_ok=false" >> $GITHUB_OUTPUT
+
+      - name: Renew session if expired
+        if: steps.session_check.outputs.session_ok == 'false'
+        env:
+          NOTE_EMAIL:    ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          GH_PAT:        ${{ secrets.GH_PAT }}
+          GITHUB_REPO:   ${{ github.repository }}
+        run: |
+          python scripts/renew_note_session.py
+          SESSION_B64=$(python -c "import base64; print(base64.b64encode(open('output/note_session.json','rb').read()).decode())")
+          echo "NOTE_SESSION_B64=$SESSION_B64" >> $GITHUB_ENV
+
+      # ── 週次投稿（最大3回リトライ）────────────────────────────
+      - name: Post weekly note (attempt 1/3)
+        id: post_1
+        continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
-          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
           LOG_LEVEL: INFO
         run: python scripts/run_weekly.py
 
-      - name: Analyze performance & update strategy
+      - name: Post weekly note (attempt 2/3)
+        id: post_2
+        if: steps.post_1.outcome == 'failure'
+        continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
-          NOTE_USER_ID: ${{ secrets.NOTE_USER_ID }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          LOG_LEVEL: INFO
+        run: |
+          sleep 60
+          python scripts/run_weekly.py
+
+      - name: Post weekly note (attempt 3/3)
+        id: post_3
+        if: steps.post_2.outcome == 'failure'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          LOG_LEVEL: DEBUG
+        run: |
+          sleep 90
+          python scripts/run_weekly.py
+
+      # ── パフォーマンス分析 ──────────────────────────────────────
+      - name: Analyze performance & update strategy
+        if: always()
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
         run: python scripts/analyze_performance.py
 
       - name: Save strategy to cache
+        if: always()
         uses: actions/cache@v4
         with:
           path: output/strategy/current_strategy.txt
           key: strategy-${{ github.run_id }}
 
       - name: Update WEEKLY_NOTE_URL repository variable
-        if: steps.weekly_post.outputs.weekly_note_url != ''
+        if: steps.post_1.outputs.weekly_note_url != '' || steps.post_2.outputs.weekly_note_url != '' || steps.post_3.outputs.weekly_note_url != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const url = '${{ steps.weekly_post.outputs.weekly_note_url }}';
+            const url = '${{ steps.post_1.outputs.weekly_note_url || steps.post_2.outputs.weekly_note_url || steps.post_3.outputs.weekly_note_url }}';
             if (url && url.startsWith('https://')) {
               try {
                 await github.rest.actions.updateRepoVariable({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'WEEKLY_NOTE_URL',
-                  value: url
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  name: 'WEEKLY_NOTE_URL', value: url
                 });
-                console.log('WEEKLY_NOTE_URL updated:', url);
               } catch (e) {
-                // 変数が存在しない場合は新規作成
                 await github.rest.actions.createRepoVariable({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'WEEKLY_NOTE_URL',
-                  value: url
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  name: 'WEEKLY_NOTE_URL', value: url
                 });
-                console.log('WEEKLY_NOTE_URL created:', url);
               }
             }
 
-      - name: Upload generated images and logs
+      - name: Upload output artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -111,4 +148,6 @@ jobs:
           path: |
             output/images/
             output/logs/
+            output/stats/
+            output/strategy/
           retention-days: 14

@@ -5,6 +5,10 @@
 # 出力ファイル（生成物・ログ）
 output/
 
+# デバッグ・実験スクリプト（公開リポジトリに含めない）
+scripts/_debug_*.py
+scripts/_test_*.py
+
 # Python
 __pycache__/
 *.py[cod]

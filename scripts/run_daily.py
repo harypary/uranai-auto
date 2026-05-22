@@ -30,6 +30,51 @@ POST_INTERVAL = 30
 PRICE = 300
 POST_TYPE = "daily"
 HASHTAG_BASE = ["今日の運勢", "占い", "星座占い", "スピリチュアル", "開運"]
+MAX_RETRIES = 2  # 1星座あたりの最大リトライ回数
+
+
+def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str | None:
+    """
+    1星座を投稿して公開URLを返す。失敗時は None。
+    下書き/公開済みのチェックはここでは行わない（呼び出し元で実施）。
+    """
+    sign_en = sign["en"]
+    hashtags = [sign["name"]] + HASHTAG_BASE
+
+    # 下書き復旧チェック
+    draft_url = plog.get_draft_url(POST_TYPE, period, sign_en)
+    if draft_url:
+        logger.info(f"  下書き発見 → 公開フロー: {draft_url}")
+        url = note.publish_existing_draft(draft_url, price=PRICE, hashtags=hashtags)
+        if infer_published(url):
+            plog.record_published(POST_TYPE, period, sign_en, url)
+            return url
+        return None
+
+    # 新規投稿
+    date_str = get_date_str(today)
+    teaser, paid = generator.generate_daily(sign, today)
+    img_path = f"output/images/daily_{sign_en}_{today.isoformat()}.png"
+    img_gen.generate_daily(sign, date_str, img_path)
+    title = generate_daily_title(sign, date_str)
+    logger.info(f"  投稿中: {title}")
+
+    url = note.publish_article(
+        title=title,
+        teaser_content=teaser,
+        paid_content=paid,
+        price=PRICE,
+        cover_image_path=img_path,
+        hashtags=hashtags,
+    )
+
+    if infer_published(url):
+        plog.record_published(POST_TYPE, period, sign_en, url)
+        return url
+    else:
+        plog.record_draft(POST_TYPE, period, sign_en, url, title=title, price=PRICE)
+        logger.warning(f"  下書き保存: {url}")
+        return None
 
 
 def main():
@@ -52,7 +97,6 @@ def main():
 
     for i, sign in enumerate(ZODIAC_SIGNS):
         sign_en = sign["en"]
-        hashtags = [sign["name"]] + HASHTAG_BASE
 
         # ── 重複チェック ──
         if plog.is_published(POST_TYPE, period, sign_en):
@@ -60,60 +104,30 @@ def main():
             success_count += 1
             continue
 
-        # ── 下書き復旧チェック ──
-        draft_url = plog.get_draft_url(POST_TYPE, period, sign_en)
-        if draft_url:
-            logger.info(f"[{i+1}/12] {sign['name']} → 下書き発見、公開フローを実行: {draft_url}")
+        # ── 投稿（最大 MAX_RETRIES 回リトライ）──
+        logger.info(f"[{i+1}/12] {sign['name']} 処理開始...")
+        posted_url = None
+        for attempt in range(1, MAX_RETRIES + 1):
             try:
-                url = note.publish_existing_draft(draft_url, price=PRICE, hashtags=hashtags)
-                if infer_published(url):
-                    plog.record_published(POST_TYPE, period, sign_en, url)
-                    logger.info(f"[{i+1}/12] {sign['name']} 下書きから公開完了: {url}")
-                    success_count += 1
-                else:
-                    logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
-                    fail_count += 1
+                posted_url = _post_one_sign(sign, today, generator, note, img_gen, plog, period)
+                if posted_url:
+                    logger.info(f"[{i+1}/12] {sign['name']} 公開完了 (attempt {attempt}): {posted_url}")
+                    break
+                logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認 (attempt {attempt})")
             except Exception as e:
-                logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
-                fail_count += 1
+                err_msg = str(e)
+                logger.error(f"[{i+1}/12] {sign['name']} 失敗 (attempt {attempt}): {err_msg[:200]}")
+                # セッション切れ検出
+                if any(kw in err_msg.lower() for kw in ("session", "login", "unauthorized", "401", "403")):
+                    logger.error("セッション切れの可能性。次の実行でセッション更新を試みます。")
+                    break
+            if attempt < MAX_RETRIES:
+                logger.info(f"  30秒後にリトライ...")
+                time.sleep(30)
 
-            if i < len(ZODIAC_SIGNS) - 1:
-                time.sleep(POST_INTERVAL)
-            continue
-
-        # ── 新規投稿 ──
-        try:
-            logger.info(f"[{i+1}/12] {sign['name']} 処理開始...")
-
-            teaser, paid = generator.generate_daily(sign, today)
-
-            img_path = f"output/images/daily_{sign_en}_{today.isoformat()}.png"
-            img_gen.generate_daily(sign, date_str, img_path)
-
-            title = generate_daily_title(sign, date_str)
-            logger.info(f"  note投稿中: {title}")
-
-            url = note.publish_article(
-                title=title,
-                teaser_content=teaser,
-                paid_content=paid,
-                price=PRICE,
-                cover_image_path=img_path,
-                hashtags=hashtags,
-            )
-
-            # 結果を記録（下書きでも公開済みでも保存）
-            if infer_published(url):
-                plog.record_published(POST_TYPE, period, sign_en, url)
-                logger.info(f"[{i+1}/12] {sign['name']} 公開完了: {url}")
-                success_count += 1
-            else:
-                plog.record_draft(POST_TYPE, period, sign_en, url, title=title, price=PRICE)
-                logger.warning(f"[{i+1}/12] {sign['name']} 下書き状態で保存: {url}")
-                fail_count += 1
-
-        except Exception as e:
-            logger.error(f"[{i+1}/12] {sign['name']} 失敗: {e}")
+        if posted_url:
+            success_count += 1
+        else:
             fail_count += 1
 
         if i < len(ZODIAC_SIGNS) - 1:
@@ -122,7 +136,9 @@ def main():
 
     logger.info(f"=== 日次note投稿完了: 成功{success_count}件 / 失敗{fail_count}件 ===")
 
-    if fail_count > 0 and success_count == 0:
+    # 失敗がある場合は exit 1（ワークフローのリトライに使われる）
+    if fail_count > 0:
+        logger.error(f"未投稿: {fail_count}件 → ワークフローが再試行します")
         sys.exit(1)
 
 
