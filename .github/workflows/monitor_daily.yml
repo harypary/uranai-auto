@@ -1,0 +1,51 @@
+name: Monitor & Auto-Retry Daily Note
+
+on:
+  schedule:
+    # 毎日 8:00 JST = 23:00 UTC（daily_note の1時間後にチェック）
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-and-retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+
+    steps:
+      - name: Check latest daily_note run result
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          # 今日の日付（UTC基準）
+          TODAY=$(date -u +%Y-%m-%d)
+          echo "Checking runs for: $TODAY"
+
+          # daily_note の最新実行を取得
+          RUNS=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
+            --jq '.workflow_runs[:5] | .[] | {id:.id, status:.status, conclusion:.conclusion, created_at:.created_at}')
+          echo "Recent runs:"
+          echo "$RUNS"
+
+          # 今日成功した実行があるか確認
+          SUCCESS=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
+            --jq "[.workflow_runs[] | select(.created_at | startswith(\"$TODAY\")) | select(.conclusion == \"success\")] | length")
+
+          echo "success_count=$SUCCESS" >> $GITHUB_OUTPUT
+
+          if [ "$SUCCESS" -gt "0" ]; then
+            echo "✅ 今日の投稿は正常に完了しています（$SUCCESS 件）"
+          else
+            echo "⚠️ 今日の投稿が未完了または失敗しています。再実行します。"
+          fi
+
+      - name: Retry daily_note if failed
+        if: steps.check.outputs.success_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          echo "日次投稿ワークフローを再実行します..."
+          gh workflow run daily_note.yml --repo ${{ github.repository }} --ref master
+          echo "再実行トリガー完了"
