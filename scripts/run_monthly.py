@@ -6,7 +6,9 @@ GitHub Actions の monthly_note.yml から呼び出される。
 
 import sys
 import time
-from datetime import date
+from datetime import datetime, timezone, timedelta
+
+JST = timezone(timedelta(hours=9))
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,7 +34,7 @@ HASHTAG_BASE = ["月次運勢", "占い", "星座占い", "スピリチュアル
 
 
 def main():
-    today = date.today()
+    today = datetime.now(JST).date()
     month_str = get_month_str(today)
     period = period_for(POST_TYPE, today)
 

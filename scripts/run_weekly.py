@@ -7,7 +7,9 @@ GitHub Actions の weekly_note.yml から呼び出される。
 import os
 import sys
 import time
-from datetime import date
+from datetime import datetime, timezone, timedelta
+
+JST = timezone(timedelta(hours=9))
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,7 +35,7 @@ HASHTAG_BASE = ["週間運勢", "占い", "星座占い", "スピリチュアル
 
 
 def main():
-    today = date.today()
+    today = datetime.now(JST).date()
     week_start, week_end = get_week_range(today)
     week_str = get_week_range_str(week_start, week_end)
     week_label = get_week_label(week_start)

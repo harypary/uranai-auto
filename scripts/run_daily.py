@@ -7,8 +7,10 @@ GitHub Actions の daily_note.yml から呼び出される。
 import os
 import sys
 import time
-from datetime import date
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+JST = timezone(timedelta(hours=9))
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -33,17 +35,43 @@ HASHTAG_BASE = ["今日の運勢", "占い", "星座占い", "スピリチュア
 MAX_RETRIES = 2  # 1星座あたりの最大リトライ回数
 
 
+def _check_already_published(key: str) -> str | None:
+    """note.com APIで公開済みか確認。公開済みならURLを返す"""
+    import requests
+    note_user = os.environ.get("NOTE_USER_ID", "0928shoki")
+    try:
+        r = requests.get(
+            f"https://note.com/{note_user}/n/{key}",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
+        )
+        if r.status_code == 200:
+            return f"https://note.com/{note_user}/n/{key}"
+    except Exception:
+        pass
+    return None
+
+
 def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str | None:
     """
     1星座を投稿して公開URLを返す。失敗時は None。
     下書き/公開済みのチェックはここでは行わない（呼び出し元で実施）。
     """
+    import re
     sign_en = sign["en"]
     hashtags = [sign["name"]] + HASHTAG_BASE
 
     # 下書き復旧チェック
     draft_url = plog.get_draft_url(POST_TYPE, period, sign_en)
     if draft_url:
+        # post_log に draft と記録されていても実際は公開済みの場合がある
+        m = re.search(r'/notes/(n[a-f0-9]+)', draft_url)
+        if m:
+            pub_url = _check_already_published(m.group(1))
+            if pub_url:
+                logger.info(f"  下書き → 実は公開済み: {pub_url}")
+                plog.record_published(POST_TYPE, period, sign_en, pub_url)
+                return pub_url
+
         logger.info(f"  下書き発見 → 公開フロー: {draft_url}")
         url = note.publish_existing_draft(draft_url, price=PRICE, hashtags=hashtags)
         if infer_published(url):
@@ -78,7 +106,7 @@ def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str |
 
 
 def main():
-    today = date.today()
+    today = datetime.now(JST).date()   # JST基準（UTC+9）
     date_str = get_date_str(today)
     period = period_for(POST_TYPE, today)
 
