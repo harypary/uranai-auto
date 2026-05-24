@@ -435,23 +435,8 @@ class NotePublisher:
     ) -> str:
         logger.info(f"記事作成開始: {title}")
 
-        # トップページ経由でエディタを起動（モーダル対策）
-        page.goto("https://note.com", wait_until="networkidle", timeout=30000)
-        _wait(2)
-        self._dismiss_modals(page)
-
-        opened = False
-        for sel in ['a[href*="/notes/new"]', 'a[href="/notes/new"]', 'a:has-text("投稿")']:
-            try:
-                els = page.locator(sel).all()
-                if els:
-                    els[0].click(timeout=5000, force=True)
-                    opened = True
-                    break
-            except Exception:
-                continue
-        if not opened:
-            page.goto(NOTE_NEW_ARTICLE_URL, wait_until="networkidle", timeout=30000)
+        # 直接エディタURLへ（_dismiss_modals を使わない: React コンポーネントを破壊するため）
+        page.goto(NOTE_NEW_ARTICLE_URL, wait_until="networkidle", timeout=30000)
         _wait(5)
 
         try:
@@ -460,7 +445,6 @@ class NotePublisher:
             logger.error(f"エディタ起動タイムアウト: {ex}")
             return ""
         _wait(2)
-        self._dismiss_modals(page)
 
         # ─── タイトル入力 ───
         self._fill_title(page, title)
@@ -475,17 +459,25 @@ class NotePublisher:
         self._fill_body(page, teaser, paid)
         _wait(2)
 
-        # ★ note.com の自動保存が完了するまで十分待つ（公開フロー成功率向上）
-        logger.info("自動保存待機 30秒...")
-        _wait(30)
+        # 自動保存待機
+        logger.info("自動保存待機 20秒...")
+        _wait(20)
 
-        # ─── 公開設定ページへ ───
-        try:
-            page.click('button:has-text("公開に進む")', timeout=8000)
-            logger.debug("公開設定ページへ遷移")
-            _wait(6)
-        except Exception as e:
-            logger.error(f"「公開に進む」失敗: {e}")
+        # ─── 公開設定ページへ（最大3回リトライ）───
+        clicked = False
+        for attempt in range(3):
+            try:
+                page.wait_for_selector('button:has-text("公開に進む")', timeout=15000)
+                page.click('button:has-text("公開に進む")', timeout=10000)
+                logger.debug("公開設定ページへ遷移")
+                _wait(6)
+                clicked = True
+                break
+            except Exception as e:
+                logger.warning(f"「公開に進む」attempt {attempt+1} 失敗: {e}")
+                _wait(5)
+        if not clicked:
+            logger.error("「公開に進む」3回とも失敗")
             return ""
 
         # ─── ハッシュタグ設定 ───

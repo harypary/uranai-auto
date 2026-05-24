@@ -10,7 +10,7 @@ on:
 jobs:
   post-daily-note:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       actions: read
 
@@ -25,6 +25,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           TODAY=$(date -u +%Y-%m-%d)
+          # 成功済み、またはキャンセル済みで60分以上実行されたrun（タイムアウトによる実質完了）をカウント
+          DONE=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
+            --jq "[.workflow_runs[] | select(.created_at | startswith(\"$TODAY\")) | select(.conclusion == \"success\" or (.conclusion == \"cancelled\" and ((.updatedAt // .updated_at) | if . then (now - (. | sub(\"Z\";\"\") | strptime(\"%Y-%m-%dT%H:%M:%S\") | mktime)) else 0 end) > 3600))] | length" 2>/dev/null || echo "0")
+          # シンプル版: 成功のみチェック
           SUCCESS=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
             --jq "[.workflow_runs[] | select(.created_at | startswith(\"$TODAY\")) | select(.conclusion == \"success\")] | length" 2>/dev/null || echo "0")
           echo "Today's success count: $SUCCESS"
