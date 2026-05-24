@@ -12,7 +12,7 @@ logger = get_logger("gemini_client")
 
 
 class GeminiClient:
-    MODEL = "gemini-2.5-flash"  # 無料枠20req/日
+    MODEL = "gemini-1.5-flash"  # 無料枠1500req/日（2.5-flashは20req/日のため変更）
     MAX_RETRIES = 3
     RETRY_BASE_DELAY = 10  # 秒
 
@@ -23,7 +23,7 @@ class GeminiClient:
         self._client = genai.Client(api_key=api_key)
         logger.info(f"GeminiClient 初期化完了: {self.MODEL}")
 
-    def generate(self, prompt: str, max_tokens: int = 4096, temperature: float = 0.85) -> str:
+    def generate(self, prompt: str, max_tokens: int = 8192, temperature: float = 0.85) -> str:
         """プロンプトを送信してテキストを生成する"""
         config = types.GenerateContentConfig(
             max_output_tokens=max_tokens,
