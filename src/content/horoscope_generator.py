@@ -165,6 +165,32 @@ class HoroscopeGenerator:
         )
         return teaser, paid
 
+    def generate_concern(self, sign: dict, theme: dict) -> Tuple[str, str]:
+        """悩み特化の高単価記事 → (ティーザー, 有料コンテンツ) を返す"""
+        prompt_template = _load_prompt("concern_reading.txt")
+        prompt = prompt_template.format(
+            sign_name=sign["name"],
+            symbol=sign["symbol"],
+            period=sign["period"],
+            element=sign["element"],
+            ruling_planet=sign["ruling_planet"],
+            keywords="・".join(sign["keywords"]),
+            concern_title=theme["title"],
+            concern_audience=theme["audience"],
+            concern_keyword=theme["keyword"],
+            concern_core_question=theme["core_question"],
+            concern_bullets=theme["bullets"],
+            price=theme["price"],
+            style_guide=_load_style_guide(),
+        )
+        raw = self._client.generate(prompt, max_tokens=12288, temperature=0.86)
+        teaser, paid = _split_content(raw)
+        logger.info(
+            f"[悩み特化:{theme['key']}] {sign['name']} 生成完了: "
+            f"ティーザー{len(teaser)}文字 / 有料{len(paid)}文字"
+        )
+        return teaser, paid
+
     def generate_daily_free_ranking(self, target_date: date = None) -> str:
         """無料の集客用「今日の12星座ランキング」を生成して本文を返す"""
         if target_date is None:
