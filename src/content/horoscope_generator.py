@@ -183,7 +183,7 @@ class HoroscopeGenerator:
             price=theme["price"],
             style_guide=_load_style_guide(),
         )
-        raw = self._client.generate(prompt, max_tokens=12288, temperature=0.86)
+        raw = self._client.generate(prompt, max_tokens=16384, temperature=0.86)
         teaser, paid = _split_content(raw)
         logger.info(
             f"[悩み特化:{theme['key']}] {sign['name']} 生成完了: "
