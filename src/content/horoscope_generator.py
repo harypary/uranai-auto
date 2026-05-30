@@ -56,6 +56,14 @@ def _load_prompt(filename: str) -> str:
     return (PROMPT_DIR / filename).read_text(encoding="utf-8")
 
 
+def _load_style_guide() -> str:
+    """全鑑定に共通する人間らしい文体ガイドを読み込む"""
+    try:
+        return (PROMPT_DIR / "_writing_style.txt").read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
 def _load_strategy() -> str:
     """パフォーマンス分析から生成された戦略コンテキストを読み込む"""
     if STRATEGY_FILE.exists():
@@ -146,9 +154,10 @@ class HoroscopeGenerator:
             money_stars=_random_stars(2, 5),
             overall_stars=_random_stars(3, 5),
             strategy_context=strategy_context,
+            style_guide=_load_style_guide(),
         )
 
-        raw = self._client.generate(prompt, max_tokens=3072, temperature=0.88)
+        raw = self._client.generate(prompt, max_tokens=8192, temperature=0.88)
         teaser, paid = _split_content(raw)
         logger.info(
             f"[日次] {sign['name']} 生成完了: "
@@ -185,9 +194,10 @@ class HoroscopeGenerator:
             money_stars=_random_stars(2, 5),
             overall_stars=_random_stars(3, 5),
             strategy_context=strategy_context,
+            style_guide=_load_style_guide(),
         )
 
-        raw = self._client.generate(prompt, max_tokens=4096, temperature=0.87)
+        raw = self._client.generate(prompt, max_tokens=8192, temperature=0.87)
         teaser, paid = _split_content(raw)
         logger.info(
             f"[週次] {sign['name']} 生成完了: "
@@ -238,6 +248,7 @@ class HoroscopeGenerator:
             week2_end=week2_end,
             week3_end=week3_end,
             strategy_context=strategy_context,
+            style_guide=_load_style_guide(),
         )
 
         raw = self._client.generate(prompt, max_tokens=16384, temperature=0.85)
