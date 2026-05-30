@@ -101,20 +101,24 @@ class NotePublisher:
             except Exception:
                 pass
 
-        # 「公開に進む」クリック
+        # 「公開に進む」クリック（連続投稿で半ロードになった下書きはreloadで復旧を試みる）
         clicked = False
-        for attempt in range(3):
+        for attempt in range(4):
             try:
-                page.wait_for_selector('button:has-text("公開に進む")', timeout=12000)
+                if attempt > 0:
+                    logger.info(f"「公開に進む」復旧のため下書きを再読込 (attempt {attempt+1})")
+                    page.goto(draft_url, wait_until="networkidle", timeout=30000)
+                    _wait(5)
+                page.wait_for_selector('button:has-text("公開に進む")', timeout=20000)
                 page.click('button:has-text("公開に進む")', timeout=8000)
                 _wait(6)
                 clicked = True
                 break
             except Exception as e:
                 logger.warning(f"「公開に進む」attempt {attempt+1} 失敗: {e}")
-                _wait(5)
+                _wait(6)
         if not clicked:
-            logger.error("「公開に進む」3回とも失敗 → スキップ")
+            logger.error("「公開に進む」4回とも失敗 → スキップ")
             raise RuntimeError("publish_draft: 公開に進むボタンを押せませんでした")
 
         # ハッシュタグ
