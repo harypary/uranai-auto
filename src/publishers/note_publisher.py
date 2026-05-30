@@ -348,6 +348,50 @@ class NotePublisher:
             finally:
                 browser.close()
 
+    def publish_free_article(
+        self,
+        title: str,
+        content: str,
+        cover_image_path: Optional[str] = None,
+        hashtags: Optional[list] = None,
+    ) -> str:
+        """note.com に無料記事（ペイウォール無し）を投稿してURLを返す。集客用。"""
+        storage_state = self._load_session()
+
+        with sync_playwright() as p:
+            browser: Browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
+            context: BrowserContext = browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                permissions=["clipboard-read", "clipboard-write"],
+                storage_state=storage_state,
+            )
+            page: Page = context.new_page()
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            page.on("dialog", lambda dialog: dialog.accept())
+            try:
+                self._verify_session(page)
+                return self._create_free_article(
+                    page=page,
+                    title=title,
+                    content=content,
+                    cover_image_path=cover_image_path,
+                    hashtags=hashtags or [],
+                )
+            finally:
+                browser.close()
+
     # ──────────────────────────────────────────────────────────
     # 内部メソッド
     # ──────────────────────────────────────────────────────────
@@ -579,6 +623,123 @@ class NotePublisher:
 
         url = page.url
         logger.info(f"投稿完了: {url}")
+        return url
+
+    def _create_free_article(
+        self,
+        page: Page,
+        title: str,
+        content: str,
+        cover_image_path: Optional[str],
+        hashtags: list,
+    ) -> str:
+        """無料記事を作成・公開する（ペイウォール処理なし）"""
+        logger.info(f"無料記事作成開始: {title}")
+
+        page.goto(NOTE_NEW_ARTICLE_URL, wait_until="networkidle", timeout=30000)
+        _wait(5)
+        try:
+            page.wait_for_selector(".ProseMirror, [contenteditable='true']", timeout=30000)
+        except Exception as ex:
+            logger.error(f"エディタ起動タイムアウト: {ex}")
+            return ""
+        _wait(2)
+
+        self._fill_title(page, title)
+        _wait(1)
+
+        if cover_image_path and Path(cover_image_path).exists():
+            self._upload_cover(page, cover_image_path)
+            _wait(3)
+
+        # 本文を全文貼り付け（境界なし）
+        body_el = None
+        for sel in [".ProseMirror", '[role="textbox"]', '[contenteditable="true"]']:
+            try:
+                page.wait_for_selector(sel, timeout=5000)
+                body_el = page.query_selector(sel)
+                if body_el:
+                    break
+            except Exception:
+                continue
+        if body_el:
+            body_el.click()
+        _wait(0.5)
+        self._paste_chunked(page, content)
+        _wait(2)
+
+        logger.info("自動保存待機 20秒...")
+        _wait(20)
+
+        # 公開設定ページへ（最大3回リトライ）
+        clicked = False
+        for attempt in range(3):
+            try:
+                page.wait_for_selector('button:has-text("公開に進む")', timeout=15000)
+                page.click('button:has-text("公開に進む")', timeout=10000)
+                _wait(6)
+                clicked = True
+                break
+            except Exception as e:
+                logger.warning(f"「公開に進む」attempt {attempt+1} 失敗: {e}")
+                _wait(5)
+        if not clicked:
+            logger.error("「公開に進む」3回とも失敗")
+            return ""
+
+        if hashtags:
+            self._set_hashtags(page, hashtags)
+            _wait(1)
+
+        # 無料記事は有料設定をスキップしてそのまま投稿
+        import re
+        try:
+            import requests as _requests
+            has_requests = True
+        except ImportError:
+            has_requests = False
+
+        m = re.search(r"/notes/(n[a-f0-9]+)", page.url)
+        note_id = m.group(1) if m else None
+        note_user = os.environ.get("NOTE_USER_ID", "0928shoki")
+
+        for round_idx in range(3):
+            for _ in range(4):
+                _wait(2)
+                for txt in ["投稿する", "公開する"]:
+                    try:
+                        btns = page.locator(f'button:has-text("{txt}")').all()
+                        for b in btns:
+                            try:
+                                if not b.is_visible() or not b.is_enabled():
+                                    continue
+                                if (b.text_content() or "").strip() == txt:
+                                    b.scroll_into_view_if_needed(timeout=2000)
+                                    _wait(0.3)
+                                    b.click(timeout=4000, force=True)
+                                    _wait(8)
+                                    break
+                            except Exception:
+                                continue
+                    except Exception:
+                        continue
+
+            if note_id and note_user and has_requests:
+                try:
+                    r = _requests.get(
+                        f"https://note.com/{note_user}/n/{note_id}",
+                        headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
+                    )
+                    if r.status_code == 200:
+                        logger.info(f"公開確認OK ({note_id}, round {round_idx+1})")
+                        break
+                except Exception:
+                    pass
+            else:
+                break
+
+        url = page.url
+        logger.info(f"無料記事投稿完了: {url}")
         return url
 
     def _fill_title(self, page: Page, title: str):

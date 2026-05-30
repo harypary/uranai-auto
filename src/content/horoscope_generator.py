@@ -165,6 +165,23 @@ class HoroscopeGenerator:
         )
         return teaser, paid
 
+    def generate_daily_free_ranking(self, target_date: date = None) -> str:
+        """無料の集客用「今日の12星座ランキング」を生成して本文を返す"""
+        if target_date is None:
+            target_date = date.today()
+
+        prompt_template = _load_prompt("daily_free_ranking.txt")
+        prompt = prompt_template.format(
+            date_str=get_date_str(target_date),
+            weekday=WEEKDAY_JP[target_date.weekday()],
+            style_guide=_load_style_guide(),
+        )
+        content = self._client.generate(prompt, max_tokens=8192, temperature=0.9).strip()
+        # 無料記事に境界が混入したら除去
+        content = content.replace(PAID_BOUNDARY, "").strip()
+        logger.info(f"[無料ランキング] 生成完了: {len(content)}文字")
+        return content
+
     def generate_weekly(
         self,
         sign: dict,

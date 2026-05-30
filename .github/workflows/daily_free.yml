@@ -1,0 +1,83 @@
+name: Daily Free - 12星座ランキング無料投稿（毎日6:30 JST・集客用）
+
+on:
+  schedule:
+    - cron: '30 21 * * *'    # 6:30 JST（主）
+    - cron: '30 22 * * *'    # 7:30 JST（バックアップ）
+  workflow_dispatch:
+
+jobs:
+  post-daily-free:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Skip if already posted today
+        id: skip_check
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+        run: |
+          TODAY=$(date -u +%Y-%m-%d)
+          SUCCESS=$(gh api repos/${{ github.repository }}/actions/workflows/daily_free.yml/runs \
+            --jq "[.workflow_runs[] | select(.created_at | startswith(\"$TODAY\")) | select(.conclusion == \"success\")] | length" 2>/dev/null || echo "0")
+          echo "Today's success count: $SUCCESS"
+          echo "already_done=$( [ \"$SUCCESS\" -gt 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+
+      - name: Exit if already posted today
+        if: steps.skip_check.outputs.already_done == 'true'
+        run: echo "本日分は既に投稿済みです。スキップします。"
+
+      - name: Set up Python 3.11
+        if: steps.skip_check.outputs.already_done != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        if: steps.skip_check.outputs.already_done != 'true'
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright and browsers
+        if: steps.skip_check.outputs.already_done != 'true'
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Create output directories
+        if: steps.skip_check.outputs.already_done != 'true'
+        run: mkdir -p output/logs
+
+      - name: Get today's date for cache key
+        id: date
+        if: steps.skip_check.outputs.already_done != 'true'
+        run: echo "today=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Restore post log from cache
+        if: steps.skip_check.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ steps.date.outputs.today }}
+          restore-keys: post-log-
+
+      - name: Post free ranking
+        if: steps.skip_check.outputs.already_done != 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          LOG_LEVEL: INFO
+        run: python scripts/run_daily_free.py
+
+      - name: Save post log to cache
+        if: steps.skip_check.outputs.already_done != 'true'
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ steps.date.outputs.today }}
