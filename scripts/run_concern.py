@@ -22,7 +22,12 @@ load_dotenv()
 
 from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator
-from src.content.concern_themes import CONCERN_THEMES, get_theme
+from src.content.concern_themes import (
+    get_theme,
+    load_all_themes,
+    save_dynamic_theme,
+)
+from src.content.concern_theme_generator import generate_new_theme
 from src.publishers.note_publisher import NotePublisher
 from src.publishers.post_logger import PostLogger, infer_published
 from src.utils.astrology_data import ZODIAC_SIGNS
@@ -34,30 +39,50 @@ POST_INTERVAL = 40
 PERIOD = "permanent"  # 常設記事なので固定（再実行時は公開済みをスキップ）
 
 
-def _select_theme() -> dict:
+def _has_remaining_signs(plog: PostLogger, theme: dict) -> bool:
+    post_type = f"concern_{theme['key']}"
+    return any(
+        not plog.is_published(post_type, PERIOD, s["en"]) for s in ZODIAC_SIGNS
+    )
+
+
+def _select_theme(plog: PostLogger, gemini: GeminiClient) -> dict:
+    """投稿するテーマを決める。
+
+    1. CONCERN_THEME 指定があればそれを優先
+    2. 未公開の星座が残る既存テーマを定義順に1つ選ぶ（自然に1テーマずつ消化）
+    3. 全テーマ公開済みなら Gemini で新テーマを生成して永続化（永久ループ）
+    """
     override = os.environ.get("CONCERN_THEME")
     if override:
         t = get_theme(override)
         if t:
             return t
-        logger.warning(f"指定テーマ '{override}' が見つかりません。ローテーションにフォールバック")
-    # 週番号でローテーション
-    week_num = datetime.now(JST).isocalendar()[1]
-    return CONCERN_THEMES[week_num % len(CONCERN_THEMES)]
+        logger.warning(f"指定テーマ '{override}' が見つかりません。自動選択にフォールバック")
+
+    all_themes = load_all_themes()
+    for t in all_themes:
+        if _has_remaining_signs(plog, t):
+            return t
+
+    logger.info("全テーマが公開済み。新テーマを自動生成します...")
+    new_theme = generate_new_theme(gemini, all_themes)
+    save_dynamic_theme(new_theme)
+    return new_theme
 
 
 def main():
-    theme = _select_theme()
+    gemini = GeminiClient()
+    plog = PostLogger()
+    theme = _select_theme(plog, gemini)
     post_type = f"concern_{theme['key']}"
     hashtags_base = theme["hashtags"]
     price = theme["price"]
 
     logger.info(f"=== 悩み特化投稿開始: {theme['title']} (¥{price}) ===")
 
-    gemini = GeminiClient()
     generator = HoroscopeGenerator(gemini)
     note = NotePublisher()
-    plog = PostLogger()
 
     success_count = 0
     fail_count = 0

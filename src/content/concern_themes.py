@@ -1,8 +1,14 @@
 """悩み特化の高単価記事（常設販売）のテーマ定義。
 
 検索流入が強く、悩みが深い人ほど課金する領域。星座×テーマで個別感を出す。
-新しいテーマを足したいときはここに追加する。
+手書きの初期テーマは CONCERN_THEMES に定義。全テーマが公開済みになると
+Geminiが新テーマを自動生成し data/concern_themes_dynamic.json に追記される。
 """
+
+import json
+from pathlib import Path
+
+DYNAMIC_THEMES_FILE = Path(__file__).parent.parent.parent / "data" / "concern_themes_dynamic.json"
 
 CONCERN_THEMES = [
     {
@@ -58,8 +64,41 @@ CONCERN_THEMES = [
 ]
 
 
+def load_dynamic_themes() -> list[dict]:
+    """自動生成された動的テーマを読み込む（ファイルが無ければ空）。"""
+    if DYNAMIC_THEMES_FILE.exists():
+        try:
+            data = json.loads(DYNAMIC_THEMES_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+
+def load_all_themes() -> list[dict]:
+    """手書き＋動的の全テーマを、keyの重複を除いて返す。"""
+    themes = list(CONCERN_THEMES)
+    seen = {t["key"] for t in themes}
+    for t in load_dynamic_themes():
+        if t.get("key") and t["key"] not in seen:
+            themes.append(t)
+            seen.add(t["key"])
+    return themes
+
+
+def save_dynamic_theme(theme: dict) -> None:
+    """動的テーマを1件追記して永続化する。"""
+    DYNAMIC_THEMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    current = load_dynamic_themes()
+    current.append(theme)
+    DYNAMIC_THEMES_FILE.write_text(
+        json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def get_theme(key: str) -> dict | None:
-    for t in CONCERN_THEMES:
+    for t in load_all_themes():
         if t["key"] == key:
             return t
     return None

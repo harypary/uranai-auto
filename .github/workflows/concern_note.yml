@@ -111,6 +111,27 @@ jobs:
           path: output/post_log.json
           key: post-log-${{ github.run_id }}
 
+      # ── 自動生成された新テーマをリポジトリへ永続化（永久ループの要）──
+      - name: Commit auto-generated themes
+        if: always()
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "GH_PAT 未設定のため新テーマのコミットをスキップ"
+            exit 0
+          fi
+          if [ -n "$(git status --porcelain data/concern_themes_dynamic.json 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/concern_themes_dynamic.json
+            git commit -m "chore: 悩み特化テーマを自動追加"
+            git push "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
+            echo "新テーマをコミットしました"
+          else
+            echo "新テーマの追加なし"
+          fi
+
       - name: Upload output artifacts
         if: always()
         uses: actions/upload-artifact@v4
