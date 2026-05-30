@@ -10,13 +10,14 @@ from src.utils.logger import get_logger
 
 logger = get_logger("gemini_client")
 
-# モデルは廃止されることがあるため複数候補を順に試す（先頭が優先）。
+# モデルは廃止・無料枠変更があるため複数候補を順に試す（先頭が優先）。
 # 環境変数 GEMINI_MODEL で先頭を上書き可能。
-# gemini-2.0-flash: 無料枠が潤沢（gemini-1.5-flashは廃止済みで404、2.5-flashは20req/日）
+# 注: gemini-2.0-flash は当プロジェクトの無料枠が limit:0（429即時）なので後方に降格。
+#     gemini-2.5-flash を先頭にする（gemini-1.5-flash は廃止済みで404）。
 DEFAULT_MODELS = [
-    "gemini-2.0-flash",
     "gemini-2.5-flash",
     "gemini-flash-latest",
+    "gemini-2.0-flash",
     "gemini-2.0-flash-001",
 ]
 
@@ -77,6 +78,10 @@ class GeminiClient:
                     # 404 NOT_FOUND / 未対応モデル → リトライせず次のモデルへ
                     if "404" in msg or "NOT_FOUND" in msg or "not found" in msg or "not supported" in msg:
                         logger.warning(f"モデル {model_name} は利用不可(404)。次の候補へフォールバック")
+                        break
+                    # 無料枠 limit:0（このモデルは枠なし）→ リトライ無駄なので即次のモデルへ
+                    if "limit: 0" in msg or "limit:0" in msg:
+                        logger.warning(f"モデル {model_name} は無料枠なし(limit:0)。次の候補へフォールバック")
                         break
                     # それ以外（レート制限・一時障害）→ バックオフしてリトライ
                     wait = self.RETRY_BASE_DELAY * (attempt + 1)
