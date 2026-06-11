@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
+from src.content import content_cache
 from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator, generate_daily_title
 from src.publishers.note_publisher import NotePublisher
@@ -79,12 +80,17 @@ def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str |
             return url
         return None
 
-    # 新規投稿
+    # 新規投稿（生成済みキャッシュがあれば再生成せずquotaを節約）
     date_str = get_date_str(today)
-    teaser, paid = generator.generate_daily(sign, today)
+    cached = content_cache.load(POST_TYPE, period, sign_en)
+    if cached:
+        teaser, paid, title = cached["teaser"], cached["paid"], cached["title"]
+    else:
+        teaser, paid = generator.generate_daily(sign, today)
+        title = generate_daily_title(sign, date_str)
+        content_cache.save(POST_TYPE, period, sign_en, teaser=teaser, paid=paid, title=title)
     img_path = f"output/images/daily_{sign_en}_{today.isoformat()}.png"
     img_gen.generate_daily(sign, date_str, img_path)
-    title = generate_daily_title(sign, date_str)
     logger.info(f"  投稿中: {title}")
 
     url = note.publish_article(

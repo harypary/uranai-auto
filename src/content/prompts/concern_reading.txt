@@ -4,7 +4,7 @@
 読者は「{price}円払ってでも答えが知りたい」と切実に思っています。期待を超える深さで応えてください。
 
 {style_guide}
-
+{strategy_context}
 【基本情報】
 - 星座: {sign_name}（{symbol}）{period}生まれ
 - 支配星: {ruling_planet} / エレメント: {element}

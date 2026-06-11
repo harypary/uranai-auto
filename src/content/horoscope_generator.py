@@ -167,8 +167,12 @@ class HoroscopeGenerator:
 
     def generate_concern(self, sign: dict, theme: dict) -> Tuple[str, str]:
         """悩み特化の高単価記事 → (ティーザー, 有料コンテンツ) を返す"""
+        strategy = _load_strategy()
+        strategy_context = f"\n【売れる記事のための改善戦略（実績データに基づく）】\n{strategy}\n" if strategy else ""
+
         prompt_template = _load_prompt("concern_reading.txt")
         prompt = prompt_template.format(
+            strategy_context=strategy_context,
             sign_name=sign["name"],
             symbol=sign["symbol"],
             period=sign["period"],

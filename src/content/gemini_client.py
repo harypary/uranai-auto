@@ -16,7 +16,8 @@ logger = get_logger("gemini_client")
 #     gemini-2.5-flash を先頭にする（gemini-1.5-flash は廃止済みで404）。
 DEFAULT_MODELS = [
     "gemini-2.5-flash",
-    "gemini-flash-latest",
+    "gemini-flash-latest",       # 実体は gemini-3.5-flash（別の20req/日枠）
+    "gemini-2.5-flash-lite",     # 別quota枠のliteモデル
     "gemini-2.0-flash",
     "gemini-2.0-flash-001",
 ]
@@ -82,6 +83,10 @@ class GeminiClient:
                     # 無料枠 limit:0（このモデルは枠なし）→ リトライ無駄なので即次のモデルへ
                     if "limit: 0" in msg or "limit:0" in msg:
                         logger.warning(f"モデル {model_name} は無料枠なし(limit:0)。次の候補へフォールバック")
+                        break
+                    # 1日あたりの無料枠を使い切った429 → 待っても当日中は回復しないため即次のモデルへ
+                    if "RESOURCE_EXHAUSTED" in msg and "PerDay" in msg:
+                        logger.warning(f"モデル {model_name} は本日の無料枠を使い切り(PerDay)。次の候補へフォールバック")
                         break
                     # それ以外（レート制限・一時障害）→ バックオフしてリトライ
                     wait = self.RETRY_BASE_DELAY * (attempt + 1)

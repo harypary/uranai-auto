@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv()
 
+from src.content import content_cache
 from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator
 from src.content.concern_themes import (
@@ -98,7 +99,12 @@ def main():
 
         try:
             logger.info(f"[{i+1}/12] {sign['name']} 処理開始...")
-            teaser, paid = generator.generate_concern(sign, theme)
+            cached = content_cache.load(post_type, PERIOD, sign_en)
+            if cached:
+                teaser, paid = cached["teaser"], cached["paid"]
+            else:
+                teaser, paid = generator.generate_concern(sign, theme)
+                content_cache.save(post_type, PERIOD, sign_en, teaser=teaser, paid=paid)
             title = f"【{sign['name']}】{theme['title']}"
             logger.info(f"  note投稿中: {title}")
 

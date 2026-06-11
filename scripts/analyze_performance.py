@@ -210,37 +210,42 @@ def analyze_and_update_strategy(articles: list[dict]) -> str:
 
     gemini = GeminiClient()
 
-    # 上位・下位記事を抽出
-    sorted_by_views = sorted(articles, key=lambda x: x["views"], reverse=True)
-    top5 = sorted_by_views[:5]
-    bottom5 = sorted_by_views[-5:] if len(sorted_by_views) > 5 else []
-
-    stats_text = "【高パフォーマンス記事（ビュー数上位）】\n"
-    for a in top5:
-        stats_text += (
+    def _line(a: dict) -> str:
+        like_rate = (a["likes"] / a["views"] * 100) if a["views"] else 0.0
+        return (
             f"- タイトル: {a['title']}\n"
-            f"  ビュー: {a['views']} / スキ: {a['likes']} / 購入: {a['purchases']}\n"
+            f"  ビュー: {a['views']} / スキ: {a['likes']}（スキ率{like_rate:.1f}%）"
+            f" / 購入: {a['purchases']}\n"
         )
 
+    # 「売れる・刺さる」順 = 購入数 > スキ数 > ビュー数 で評価
+    sorted_by_sales = sorted(
+        articles, key=lambda x: (x["purchases"], x["likes"], x["views"]), reverse=True
+    )
+    top5 = sorted_by_sales[:5]
+    bottom5 = sorted_by_sales[-5:] if len(sorted_by_sales) > 5 else []
+
+    stats_text = "【売れている・スキされている記事（購入数→スキ数順）】\n"
+    for a in top5:
+        stats_text += _line(a)
+
     if bottom5:
-        stats_text += "\n【低パフォーマンス記事（ビュー数下位）】\n"
+        stats_text += "\n【反応が取れていない記事】\n"
         for a in bottom5:
-            stats_text += (
-                f"- タイトル: {a['title']}\n"
-                f"  ビュー: {a['views']} / スキ: {a['likes']} / 購入: {a['purchases']}\n"
-            )
+            stats_text += _line(a)
 
     prompt = f"""あなたはnote.comの占い記事のマーケティング分析者です。
-以下の記事パフォーマンスデータを分析し、次回以降の記事で実践すべき改善戦略を日本語で提案してください。
+以下の記事パフォーマンスデータを分析し、「どんな文章なら売れるか」を考察して、
+次回以降の記事で実践すべき改善戦略を日本語で提案してください。
 
 {stats_text}
 
 以下の観点で分析してください：
-1. 高パフォーマンス記事のタイトルパターン（どんな言葉・構造が効いているか）
-2. 高パフォーマンス記事のコンテンツの共通点（星座・テーマ・時期）
+1. 購入・スキにつながっている記事のタイトルパターン（どんな言葉・構造が効いているか）
+2. スキ率が高い記事の共通点（星座・テーマ・言い回し・感情の扱い方）
 3. 次回記事のタイトルで使うべきキーワード・避けるべきキーワード
-4. 無料ティーザー部分で強調すべきポイント
-5. 有料部分でより響く内容の方向性
+4. 無料ティーザーで「続きを買いたくなる」ために強調すべきポイント
+5. 有料部分で読者が満足し、次も買いたくなる内容の方向性
 
 出力形式：
 - 箇条書きで簡潔に（合計200〜300文字）

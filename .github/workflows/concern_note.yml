@@ -35,7 +35,14 @@ jobs:
           playwright install-deps chromium
 
       - name: Create output directories
-        run: mkdir -p output/logs
+        run: mkdir -p output/logs output/strategy
+
+      - name: Restore strategy file from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/strategy/current_strategy.txt
+          key: strategy-${{ github.run_id }}
+          restore-keys: strategy-
 
       - name: Restore post log from cache
         uses: actions/cache@v4
