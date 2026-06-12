@@ -77,6 +77,34 @@ class NotePublisher:
             finally:
                 browser.close()
 
+    def _dump_publish_failure_diagnostics(self, page: Page) -> None:
+        """「公開に進む」が見つからない原因を特定するため、画面の状態をログとスクショに残す"""
+        try:
+            info = page.evaluate(
+                """() => ({
+                    url: location.href,
+                    title: document.title,
+                    buttons: Array.from(document.querySelectorAll('button'))
+                        .map(b => b.textContent.trim()).filter(Boolean).slice(0, 40),
+                    dialogs: Array.from(document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="Modal"]'))
+                        .map(d => d.textContent.trim().slice(0, 120)).slice(0, 5),
+                })"""
+            )
+            logger.error(f"診断: url={info.get('url')} title={info.get('title')}")
+            logger.error(f"診断: 表示中ボタン={info.get('buttons')}")
+            if info.get("dialogs"):
+                logger.error(f"診断: ダイアログ={info.get('dialogs')}")
+        except Exception as e:
+            logger.warning(f"診断情報の取得失敗: {e}")
+        try:
+            shot_dir = Path("output/logs")
+            shot_dir.mkdir(parents=True, exist_ok=True)
+            shot = shot_dir / f"publish_fail_{int(time.time())}.png"
+            page.screenshot(path=str(shot), full_page=False)
+            logger.error(f"診断: スクリーンショット保存 {shot}")
+        except Exception as e:
+            logger.warning(f"スクリーンショット保存失敗: {e}")
+
     def _publish_draft_flow(
         self,
         page: Page,
@@ -118,6 +146,7 @@ class NotePublisher:
                 logger.warning(f"「公開に進む」attempt {attempt+1} 失敗: {e}")
                 _wait(6)
         if not clicked:
+            self._dump_publish_failure_diagnostics(page)
             logger.error("「公開に進む」4回とも失敗 → スキップ")
             raise RuntimeError("publish_draft: 公開に進むボタンを押せませんでした")
 
