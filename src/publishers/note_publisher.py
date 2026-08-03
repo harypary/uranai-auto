@@ -130,6 +130,8 @@ class NotePublisher:
                 pass
 
         # 「公開に進む」クリック（連続投稿で半ロードになった下書きはreloadで復旧を試みる）
+        # 前回の失敗で公開設定画面(/publish/)のURLが下書きとして保存されている場合、
+        # 既にこの画面にいるため「公開に進む」は存在しない。その時はクリック不要。
         clicked = False
         for attempt in range(4):
             try:
@@ -137,6 +139,10 @@ class NotePublisher:
                     logger.info(f"「公開に進む」復旧のため下書きを再読込 (attempt {attempt+1})")
                     page.goto(draft_url, wait_until="networkidle", timeout=30000)
                     _wait(5)
+                if "/publish" in page.url:
+                    logger.info("既に公開設定画面のため「公開に進む」をスキップ")
+                    clicked = True
+                    break
                 page.wait_for_selector('button:has-text("公開に進む")', timeout=20000)
                 page.click('button:has-text("公開に進む")', timeout=8000)
                 _wait(6)
