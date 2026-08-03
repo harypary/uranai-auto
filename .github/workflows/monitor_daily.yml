@@ -49,3 +49,49 @@ jobs:
           echo "日次投稿ワークフローを再実行します..."
           gh workflow run daily_note.yml --repo ${{ github.repository }} --ref master
           echo "再実行トリガー完了"
+
+      # 再実行しても直らない障害（セッション切れ・note.com仕様変更など）は
+      # 放置すると数週間気づけないため、Issueを立てて所有者にメール通知する。
+      - name: Alert if posting has been failing for days
+        if: steps.check.outputs.success_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          SINCE=$(date -u -d '3 days ago' +%Y-%m-%d)
+          RECENT_SUCCESS=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
+            --jq "[.workflow_runs[] | select(.created_at >= \"$SINCE\") | select(.conclusion == \"success\")] | length" 2>/dev/null || echo "0")
+          echo "直近3日の成功数: $RECENT_SUCCESS"
+
+          if [ "$RECENT_SUCCESS" -gt 0 ]; then
+            echo "直近に成功があるため通知しません。"
+            exit 0
+          fi
+
+          # 既存の未解決アラートがあれば重複して立てない
+          EXISTING=$(gh issue list --repo ${{ github.repository }} \
+            --label "posting-down" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "既存のアラートIssueがあるためスキップします。"
+            exit 0
+          fi
+
+          gh label create "posting-down" --repo ${{ github.repository }} \
+            --color "B60205" --description "自動投稿の停止アラート" 2>/dev/null || true
+
+          LATEST=$(gh api repos/${{ github.repository }}/actions/workflows/daily_note.yml/runs \
+            --jq '.workflow_runs[0].html_url' 2>/dev/null || echo "")
+
+          gh issue create --repo ${{ github.repository }} \
+            --label "posting-down" \
+            --title "自動投稿が3日以上停止しています" \
+            --body "日次投稿が直近3日間、一度も成功していません。
+
+          最新の実行ログ: $LATEST
+
+          よくある原因:
+          - note.com のセッション切れ（renew_session ワークフローを手動実行して復旧）
+          - note.com のログイン画面や編集画面のDOM変更（ログの「診断」行を確認）
+          - Gemini の無料枠切れ（RESOURCE_EXHAUSTED）
+
+          復旧したらこのIssueをクローズしてください。次の障害時に再度通知されます。"
+          echo "アラートIssueを作成しました。"

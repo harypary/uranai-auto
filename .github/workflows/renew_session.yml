@@ -1,9 +1,10 @@
-name: Renew note.com Session（毎月10日 9:00 JST）
+name: Renew note.com Session（毎週日曜 5:00 JST）
 
 on:
   schedule:
-    # 毎月10日 9:00 JST = 0:00 UTC
-    - cron: '0 0 10 * *'
+    # 毎週日曜 5:00 JST = 前日20:00 UTC。月1回だとセッション切れの空白が
+    # 最大1ヶ月生まれ、その間の投稿が全停止するため毎週更新する。
+    - cron: '0 20 * * 6'
   workflow_dispatch:  # 手動実行も可能
 
 jobs:

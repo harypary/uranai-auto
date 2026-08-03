@@ -36,6 +36,66 @@ GITHUB_PAT    = os.getenv("GH_PAT", "")
 GITHUB_REPO   = os.getenv("GITHUB_REPO", "")  # "username/repo"
 
 
+def _fill_first(page, selectors: list, value: str, label: str) -> None:
+    """候補セレクタを順に試して最初に見つかった入力欄へ値を入れる。
+
+    note.com はログインフォームのDOMを予告なく変更するため、単一セレクタに
+    依存すると投稿が全停止する。候補を総当たりして耐性を持たせる。
+    """
+    for sel in selectors:
+        try:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                el.fill(value)
+                print(f"    {label}入力OK (selector={sel})")
+                return
+        except Exception:
+            continue
+    _dump_login_diagnostics(page)
+    raise RuntimeError(f"{label}の入力欄が見つかりません。候補={selectors}")
+
+
+def _is_authenticated(page) -> bool:
+    """current_user API でログイン済みかを判定する。
+
+    ログイン成功後もURLが /login のまま残ることがあるため、URL判定は使わない。
+    """
+    try:
+        return bool(
+            page.evaluate(
+                """async () => {
+                    try {
+                        const r = await fetch('https://note.com/api/v2/current_user/email',
+                            {credentials: 'include'});
+                        return r.ok;
+                    } catch (e) { return false; }
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def _dump_login_diagnostics(page) -> None:
+    """ログイン失敗時にページ構造を出力する（次回の原因特定を即座にするため）"""
+    try:
+        info = page.evaluate(
+            """() => ({
+                url: location.href,
+                title: document.title,
+                inputs: Array.from(document.querySelectorAll('input'))
+                    .map(i => ({name: i.name, type: i.type, id: i.id, placeholder: i.placeholder})),
+                buttons: Array.from(document.querySelectorAll('button'))
+                    .map(b => b.textContent.trim()).filter(Boolean).slice(0, 20),
+                bodyHead: document.body.innerText.slice(0, 400),
+            })"""
+        )
+        print("=== ログインページ診断 ===")
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+    except Exception as e:
+        print(f"診断情報の取得に失敗: {e}")
+
+
 # ──────────────────────────────────────────────
 # 1. Playwright 自動ログイン
 # ──────────────────────────────────────────────
@@ -70,24 +130,51 @@ def login_and_save_session() -> dict:
         page.goto("https://note.com/login", wait_until="networkidle")
         time.sleep(2)
 
-        # メールアドレス入力
-        page.fill('input[name="email"], input[type="email"]', NOTE_EMAIL)
+        # 入力欄はnote.com側の改修でセレクタが変わるため複数候補を順に試す
+        # （2026-08時点: <input type="text" id="email"> でname属性なし）
+        _fill_first(
+            page,
+            [
+                "#email",
+                'input[name="email"]',
+                'input[type="email"]',
+                'input[placeholder*="mail"]',
+                'input[placeholder*="note ID"]',
+            ],
+            NOTE_EMAIL,
+            "メールアドレス",
+        )
         time.sleep(0.5)
 
-        # パスワード入力
-        page.fill('input[name="password"], input[type="password"]', NOTE_PASSWORD)
+        _fill_first(
+            page,
+            [
+                "#password",
+                'input[name="password"]',
+                'input[type="password"]',
+            ],
+            NOTE_PASSWORD,
+            "パスワード",
+        )
         time.sleep(0.5)
 
         # ログインボタンクリック
         page.click('button[type="submit"], button:has-text("ログイン")')
-        time.sleep(4)
 
-        # ログイン確認（ダッシュボードか記事一覧へ遷移するはず）
-        current_url = page.url
-        if "login" in current_url:
-            raise RuntimeError(f"ログイン失敗: まだログインページにいます ({current_url})")
+        # ログイン確認。URLは成功しても /login のまま残ることがあるため、
+        # current_user API で実際の認証状態を見る（最大40秒ポーリング）。
+        authenticated = False
+        for _ in range(20):
+            time.sleep(2)
+            if _is_authenticated(page):
+                authenticated = True
+                break
 
-        print(f"    ログイン成功: {current_url}")
+        if not authenticated:
+            _dump_login_diagnostics(page)
+            raise RuntimeError(f"ログイン失敗: 認証が確認できません (url={page.url})")
+
+        print(f"    ログイン成功: {page.url}")
 
         # セッション保存
         SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -163,7 +250,7 @@ def update_github_secret(secret_value: str):
         raise RuntimeError(f"GitHub API エラー: {status} {e.read().decode()}")
 
     if status in (201, 204):
-        print("    NOTE_SESSION_B64 更新成功 ✅")
+        print("    NOTE_SESSION_B64 更新成功")
     else:
         raise RuntimeError(f"GitHub API 予期しないステータス: {status}")
 
@@ -185,7 +272,7 @@ def main():
     update_github_secret(b64)
 
     print()
-    print("✅ セッション更新完了！次の有効期限まで自動投稿が継続されます。")
+    print("セッション更新完了。次の有効期限まで自動投稿が継続されます。")
 
 
 if __name__ == "__main__":
