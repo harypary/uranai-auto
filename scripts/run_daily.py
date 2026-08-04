@@ -155,6 +155,11 @@ def main():
                 if any(kw in err_msg.lower() for kw in ("session", "login", "unauthorized", "401", "403")):
                     logger.error("セッション切れの可能性。次の実行でセッション更新を試みます。")
                     break
+                # Gemini無料枠切れはリトライしても当日中は回復しない。
+                # 再試行すると残り星座ぶんの枠まで浪費するため即座に打ち切る。
+                if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
+                    logger.error("Gemini無料枠切れ。リトライせず次の星座へ進みます。")
+                    break
             if attempt < MAX_RETRIES:
                 logger.info(f"  30秒後にリトライ...")
                 time.sleep(30)
