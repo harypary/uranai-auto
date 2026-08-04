@@ -30,6 +30,9 @@ from src.utils.logger import get_logger
 logger = get_logger("run_daily")
 
 POST_INTERVAL = 30
+# 1回のGemini呼び出しで生成する星座数。12件を1回にまとめると出力トークン
+# 上限(65,536)を超えて後半が欠落するため、4件ずつ3回に分ける。
+BATCH_SIZE = int(os.environ.get("DAILY_BATCH_SIZE", "4"))
 PRICE = 300
 POST_TYPE = "daily"
 HASHTAG_BASE = ["今日の運勢", "占い", "星座占い", "スピリチュアル", "開運"]
@@ -72,6 +75,50 @@ def _fetch_published_signs_today(date_str: str) -> set:
     except Exception as e:
         logger.warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
     return found
+
+
+def _generate_missing_in_batches(generator, plog, period, today, date_str, already_on_note) -> None:
+    """未生成の星座をまとめて生成し、キャッシュへ保存する。
+
+    星座ごとに個別APIを呼ぶとGemini無料枠（1モデル20リクエスト/日）を
+    使い切るため、BATCH_SIZE星座ずつ1回の呼び出しで生成して回数を減らす。
+    12星座を1回にまとめると出力トークン上限を超えて後半が欠落するため、
+    分割して確実に全星座ぶんを取得する。
+    """
+    todo = [
+        s for s in ZODIAC_SIGNS
+        if not plog.is_published(POST_TYPE, period, s["en"])
+        and s["en"] not in already_on_note
+        and content_cache.load(POST_TYPE, period, s["en"]) is None
+    ]
+    if not todo:
+        logger.info("バッチ生成: 生成が必要な星座はありません")
+        return
+
+    logger.info(f"バッチ生成開始: {len(todo)}星座を{BATCH_SIZE}件ずつ生成します")
+    for i in range(0, len(todo), BATCH_SIZE):
+        chunk = todo[i:i + BATCH_SIZE]
+        names = "・".join(s["name"] for s in chunk)
+        try:
+            results = generator.generate_daily_batch(chunk, today)
+        except Exception as e:
+            logger.error(f"バッチ生成失敗({names}): {str(e)[:200]}")
+            if "RESOURCE_EXHAUSTED" in str(e) or "429" in str(e):
+                logger.error("Gemini無料枠切れ。以降のバッチ生成を中止します。")
+                return
+            continue
+
+        for sign in chunk:
+            got = results.get(sign["en"])
+            if not got:
+                continue
+            teaser, paid = got
+            content_cache.save(
+                POST_TYPE, period, sign["en"],
+                teaser=teaser, paid=paid,
+                title=generate_daily_title(sign, date_str),
+            )
+        logger.info(f"バッチ生成完了({names}): {len(results)}/{len(chunk)}件")
 
 
 def _check_already_published(key: str) -> str | None:
@@ -124,6 +171,7 @@ def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str |
     if cached:
         teaser, paid, title = cached["teaser"], cached["paid"], cached["title"]
     else:
+        # バッチ生成で用意できなかった星座のみ個別生成にフォールバック
         teaser, paid = generator.generate_daily(sign, today)
         title = generate_daily_title(sign, date_str)
         content_cache.save(POST_TYPE, period, sign_en, teaser=teaser, paid=paid, title=title)
@@ -171,6 +219,10 @@ def main():
     already_on_note = _fetch_published_signs_today(date_str)
     if already_on_note:
         logger.info(f"note.comで公開済みの星座: {len(already_on_note)}件")
+
+    _generate_missing_in_batches(
+        generator, plog, period, today, date_str, already_on_note
+    )
 
     for i, sign in enumerate(ZODIAC_SIGNS):
         sign_en = sign["en"]

@@ -165,6 +165,47 @@ class HoroscopeGenerator:
         )
         return teaser, paid
 
+    def generate_daily_batch(self, signs: list, target_date: date = None) -> dict:
+        """複数星座の日次占いを1回のAPI呼び出しでまとめて生成する。
+
+        星座ごとに個別に呼ぶとGemini無料枠（1モデル20リクエスト/日）を
+        すぐ使い切るため、まとめて生成して呼び出し回数を減らす。
+        戻り値: {sign_en: (teaser, paid)}。取り出せなかった星座は含めない。
+        """
+        if target_date is None:
+            target_date = date.today()
+
+        strategy = _load_strategy()
+        strategy_context = f"\n【今日の改善戦略（分析データに基づく）】\n{strategy}\n" if strategy else ""
+
+        signs_block = "\n".join(
+            f"- キー: {s['en']} / {s['name']}（{s['symbol']}）{s['period']}生まれ / "
+            f"支配星: {s['ruling_planet']} / エレメント: {s['element']} / "
+            f"キーワード: {'・'.join(s['keywords'])}"
+            for s in signs
+        )
+
+        prompt = _load_prompt("daily_horoscope_batch.txt").format(
+            date_str=get_date_str(target_date),
+            weekday=WEEKDAY_JP[target_date.weekday()],
+            style_guide=_load_style_guide(),
+            strategy_context=strategy_context,
+            signs_block=signs_block,
+        )
+
+        raw = self._client.generate(prompt, max_tokens=32768, temperature=0.88)
+        results = _split_batch(raw, [s["en"] for s in signs])
+
+        missing = [s["en"] for s in signs if s["en"] not in results]
+        if missing:
+            logger.warning(f"[日次バッチ] 取り出せなかった星座: {missing}")
+        for sign_en, (teaser, paid) in results.items():
+            logger.info(
+                f"[日次バッチ] {sign_en} 生成完了: "
+                f"ティーザー{len(teaser)}文字 / 有料{len(paid)}文字"
+            )
+        return results
+
     def generate_concern(self, sign: dict, theme: dict) -> Tuple[str, str]:
         """悩み特化の高単価記事 → (ティーザー, 有料コンテンツ) を返す"""
         strategy = _load_strategy()
@@ -305,6 +346,30 @@ class HoroscopeGenerator:
             f"ティーザー{len(teaser)}文字 / 有料{len(paid)}文字"
         )
         return teaser, paid
+
+
+def _split_batch(raw: str, expected_keys: list) -> dict:
+    """バッチ生成の出力を ===SIGN:キー=== で星座ごとに分割する。
+
+    生成が途中で打ち切られた場合に備え、本文が短すぎるものは
+    不完全とみなして採用しない（中途半端な記事を公開しないため）。
+    """
+    import re
+
+    results = {}
+    parts = re.split(r"===\s*SIGN\s*:\s*([A-Za-z_]+)\s*===", raw)
+    # parts = [先頭ゴミ, キー1, 本文1, キー2, 本文2, ...]
+    for i in range(1, len(parts) - 1, 2):
+        key = parts[i].strip().lower()
+        body = parts[i + 1]
+        if key not in expected_keys:
+            continue
+        teaser, paid = _split_content(body)
+        if len(paid) < 800:
+            logger.warning(f"[日次バッチ] {key} は本文が短すぎるため不採用（{len(paid)}文字）")
+            continue
+        results[key] = (teaser, paid)
+    return results
 
 
 def _split_content(raw: str) -> Tuple[str, str]:
