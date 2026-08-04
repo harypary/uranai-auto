@@ -36,6 +36,44 @@ HASHTAG_BASE = ["今日の運勢", "占い", "星座占い", "スピリチュア
 MAX_RETRIES = 2  # 1星座あたりの最大リトライ回数
 
 
+def _fetch_published_signs_today(date_str: str) -> set:
+    """note.comから「今日の日次記事が既にある星座」を取得する。
+
+    post_log は GitHub Actions のキャッシュ管理のため、実行が並走したり
+    キャッシュが復元できないと空になり、同じ星座を二重投稿してしまう。
+    note.com 本体を正とすることで、キャッシュ状態に関わらず重複を防ぐ。
+    タイトルに星座名と当日の日付文字列の両方を含むものだけを日次記事とみなす
+    （週次・月次のタイトルは同じ日付文字列を含まないため誤検出しない）。
+    """
+    import requests
+    note_user = os.environ.get("NOTE_USER_ID", "0928shoki")
+    found = set()
+    try:
+        for page in range(1, 5):
+            r = requests.get(
+                f"https://note.com/api/v2/creators/{note_user}/contents",
+                params={"kind": "note", "page": page},
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+            )
+            if r.status_code != 200:
+                break
+            data = r.json().get("data", {})
+            contents = data.get("contents", [])
+            for n in contents:
+                title = n.get("name", "")
+                if date_str not in title:
+                    continue
+                for s in ZODIAC_SIGNS:
+                    if s["name"] in title:
+                        found.add(s["en"])
+                        break
+            if data.get("isLastPage") or not contents:
+                break
+    except Exception as e:
+        logger.warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
+    return found
+
+
 def _check_already_published(key: str) -> str | None:
     """note.com APIで公開済みか確認。公開済みならURLを返す"""
     import requests
@@ -129,11 +167,16 @@ def main():
     success_count = 0
     fail_count = 0
 
+    # note.com を正として今日公開済みの星座を取得（キャッシュ欠落・並走時の二重投稿を防ぐ）
+    already_on_note = _fetch_published_signs_today(date_str)
+    if already_on_note:
+        logger.info(f"note.comで公開済みの星座: {len(already_on_note)}件")
+
     for i, sign in enumerate(ZODIAC_SIGNS):
         sign_en = sign["en"]
 
         # ── 重複チェック ──
-        if plog.is_published(POST_TYPE, period, sign_en):
+        if plog.is_published(POST_TYPE, period, sign_en) or sign_en in already_on_note:
             logger.info(f"[{i+1}/12] {sign['name']} → 既に公開済みのためスキップ")
             success_count += 1
             continue

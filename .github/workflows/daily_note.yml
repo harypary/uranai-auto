@@ -7,6 +7,12 @@ on:
     - cron: '30 23 * * *'   # 8:30 JST（バックアップ2: 両方失敗した場合）
   workflow_dispatch:
 
+# 並走すると post_log をお互い参照できず同じ星座を二重投稿するため、
+# 常に1本だけ走らせる（実行中のものを優先し、後発は待たせず捨てる）。
+concurrency:
+  group: daily-note
+  cancel-in-progress: false
+
 jobs:
   post-daily-note:
     runs-on: ubuntu-latest
