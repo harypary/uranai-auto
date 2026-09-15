@@ -93,6 +93,68 @@ class PostLogger:
         self._save()
 
 
+def fetch_published_signs(marker: str, max_pages: int = 8) -> set:
+    """note.com 上で、タイトルに marker（日次なら日付、週次なら週ラベル）と星座名の両方を含む
+    公開記事の星座(en)を返す。
+
+    post_log は Actions キャッシュ管理のため並走・復元失敗で空になり二重投稿を招く。
+    note.com 本体を正として重複を防ぐ。
+    """
+    import requests
+    from src.utils.astrology_data import ZODIAC_SIGNS
+    from src.utils.logger import get_logger
+
+    found = set()
+    try:
+        for page in range(1, max_pages + 1):
+            r = requests.get(
+                f"https://note.com/api/v2/creators/{NOTE_USER_ID}/contents",
+                params={"kind": "note", "page": page},
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+            )
+            if r.status_code != 200:
+                break
+            data = r.json().get("data", {})
+            contents = data.get("contents", [])
+            for n in contents:
+                title = n.get("name", "")
+                if marker not in title:
+                    continue
+                for s in ZODIAC_SIGNS:
+                    if s["name"] in title:
+                        found.add(s["en"])
+                        break
+            if data.get("isLastPage") or not contents:
+                break
+    except Exception as e:
+        get_logger("post_logger").warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
+    return found
+
+
+def fetch_published_titles(marker: str, max_pages: int = 3) -> list:
+    """note.com 上で、タイトルに marker を含む公開記事のタイトル一覧を返す。"""
+    import requests
+
+    titles = []
+    try:
+        for page in range(1, max_pages + 1):
+            r = requests.get(
+                f"https://note.com/api/v2/creators/{NOTE_USER_ID}/contents",
+                params={"kind": "note", "page": page},
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+            )
+            if r.status_code != 200:
+                break
+            data = r.json().get("data", {})
+            contents = data.get("contents", [])
+            titles += [n.get("name", "") for n in contents if marker in n.get("name", "")]
+            if data.get("isLastPage") or not contents:
+                break
+    except Exception:
+        pass
+    return titles
+
+
 def infer_published(url: str) -> bool:
     """URLが公開済み記事URLかどうか判定"""
     return bool(url and f"note.com/{NOTE_USER_ID}/n/" in url)

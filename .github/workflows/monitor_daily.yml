@@ -95,3 +95,52 @@ jobs:
 
           復旧したらこのIssueをクローズしてください。次の障害時に再度通知されます。"
           echo "アラートIssueを作成しました。"
+
+      # 公開リポジトリは60日間コミットがないとスケジュール実行が全停止するため、毎日有効化し直して延命する
+      - name: Keep scheduled workflows enabled
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          for id in $(gh api repos/${{ github.repository }}/actions/workflows --jq '.workflows[].id'); do
+            gh api -X PUT repos/${{ github.repository }}/actions/workflows/$id/enable && echo "enabled $id" || echo "enable失敗 $id"
+          done
+
+      # セッション自動更新はログイン画面の変更で止まりやすいため、期限切れで全停止する前に通知する
+      - name: Alert if note session expires soon
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+        run: |
+          DAYS=$(python3 -c "
+          import base64, json, os, time
+          s = json.loads(base64.b64decode(os.environ['NOTE_SESSION_B64']))
+          exp = [c['expires'] for c in s.get('cookies', []) if c['name'].startswith('_note_session') and c['expires'] > 0]
+          print(int((min(exp) - time.time()) // 86400) if exp else -1)
+          ")
+          echo "noteセッション残り日数: $DAYS"
+          if [ "$DAYS" -ge 14 ]; then
+            exit 0
+          fi
+
+          EXISTING=$(gh issue list --repo ${{ github.repository }} \
+            --label "session-expiring" --state open --json number --jq 'length' 2>/dev/null || echo "0")
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "既存のアラートIssueがあるためスキップします。"
+            exit 0
+          fi
+
+          gh label create "session-expiring" --repo ${{ github.repository }} \
+            --color "FBCA04" --description "noteセッションの期限切れ間近" 2>/dev/null || true
+
+          gh issue create --repo ${{ github.repository }} \
+            --label "session-expiring" \
+            --title "noteセッションの期限が残り${DAYS}日です" \
+            --body "期限が切れると全ての自動投稿が止まります。
+
+          復旧手順（どちらか）:
+          1. Actions の「Renew note.com Session」を手動実行（成功すれば NOTE_SESSION_B64 が自動更新されます）
+          2. 失敗する場合はPCで python scripts/setup_note_session.py を実行し、NOTE_SESSION_B64 を更新
+
+          更新後にこのIssueをクローズしてください。"

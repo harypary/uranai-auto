@@ -22,7 +22,7 @@ from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator, generate_daily_title
 from src.publishers.note_publisher import NotePublisher
 from src.publishers.image_generator import CoverImageGenerator
-from src.publishers.post_logger import PostLogger, infer_published, period_for
+from src.publishers.post_logger import PostLogger, fetch_published_signs, infer_published, period_for
 from src.utils.astrology_data import ZODIAC_SIGNS
 from src.utils.date_utils import get_date_str
 from src.utils.logger import get_logger
@@ -37,44 +37,6 @@ PRICE = 300
 POST_TYPE = "daily"
 HASHTAG_BASE = ["今日の運勢", "占い", "星座占い", "スピリチュアル", "開運"]
 MAX_RETRIES = 2  # 1星座あたりの最大リトライ回数
-
-
-def _fetch_published_signs_today(date_str: str) -> set:
-    """note.comから「今日の日次記事が既にある星座」を取得する。
-
-    post_log は GitHub Actions のキャッシュ管理のため、実行が並走したり
-    キャッシュが復元できないと空になり、同じ星座を二重投稿してしまう。
-    note.com 本体を正とすることで、キャッシュ状態に関わらず重複を防ぐ。
-    タイトルに星座名と当日の日付文字列の両方を含むものだけを日次記事とみなす
-    （週次・月次のタイトルは同じ日付文字列を含まないため誤検出しない）。
-    """
-    import requests
-    note_user = os.environ.get("NOTE_USER_ID", "0928shoki")
-    found = set()
-    try:
-        for page in range(1, 5):
-            r = requests.get(
-                f"https://note.com/api/v2/creators/{note_user}/contents",
-                params={"kind": "note", "page": page},
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
-            )
-            if r.status_code != 200:
-                break
-            data = r.json().get("data", {})
-            contents = data.get("contents", [])
-            for n in contents:
-                title = n.get("name", "")
-                if date_str not in title:
-                    continue
-                for s in ZODIAC_SIGNS:
-                    if s["name"] in title:
-                        found.add(s["en"])
-                        break
-            if data.get("isLastPage") or not contents:
-                break
-    except Exception as e:
-        logger.warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
-    return found
 
 
 def _generate_missing_in_batches(generator, plog, period, today, date_str, already_on_note) -> None:
@@ -216,7 +178,7 @@ def main():
     fail_count = 0
 
     # note.com を正として今日公開済みの星座を取得（キャッシュ欠落・並走時の二重投稿を防ぐ）
-    already_on_note = _fetch_published_signs_today(date_str)
+    already_on_note = fetch_published_signs(date_str)
     if already_on_note:
         logger.info(f"note.comで公開済みの星座: {len(already_on_note)}件")
 

@@ -1,12 +1,16 @@
 """
-note.com のインプレッション・スキ数・購入数を取得し、
-Gemini で分析して output/strategy/current_strategy.txt を更新する。
+note.com の販売実績・PV・スキを取得し、Gemini で「売れた文章の傾向」を分析して
+output/strategy/current_strategy.txt を更新する（次回以降の生成プロンプトに注入される）。
 
-投稿ワークフロー（daily/weekly/monthly）の完了後に実行される。
+投稿ワークフロー（daily/weekly）の完了後に実行される。
+- PV・スキ: /api/v1/stats/pv（セッションで取得可）
+- 売上: /api/v1/stats/sales は本人確認が必要で取れないため、ダッシュボードを「全期間×売上順」にして表から読む
 """
 
+import base64
 import json
 import os
+import re
 import sys
 import time
 from datetime import date
@@ -26,240 +30,195 @@ STATS_DIR = Path("output/stats")
 STRATEGY_DIR = Path("output/strategy")
 STRATEGY_FILE = STRATEGY_DIR / "current_strategy.txt"
 NOTE_USER_ID = os.environ.get("NOTE_USER_ID", "0928shoki")
+MAX_PV_PAGES = 100
+
+
+def _load_storage_state() -> dict | None:
+    session_b64 = os.environ.get("NOTE_SESSION_B64", "").strip()
+    if session_b64:
+        return json.loads(base64.b64decode(session_b64).decode("utf-8"))
+    session_file = Path("output/note_session.json")
+    if session_file.exists():
+        return json.loads(session_file.read_text(encoding="utf-8"))
+    return None
+
+
+def _fetch_json(page, url: str) -> dict | None:
+    res = page.evaluate(
+        """async (u) => {
+            const r = await fetch(u, {credentials: 'include'});
+            return {status: r.status, text: await r.text()};
+        }""",
+        url,
+    )
+    if res["status"] != 200:
+        return None
+    try:
+        return json.loads(res["text"])
+    except Exception:
+        return None
+
+
+def _fetch_pv_stats(page) -> list[dict]:
+    articles = {}
+    for pg in range(1, MAX_PV_PAGES + 1):
+        body = _fetch_json(page, f"/api/v1/stats/pv?filter=all&page={pg}&sort=pv")
+        if not body:
+            break
+        data = body.get("data", {})
+        notes = data.get("note_stats", [])
+        for n in notes:
+            articles[n["key"]] = {
+                "key": n["key"],
+                "title": n.get("name", ""),
+                "url": f"https://note.com/{NOTE_USER_ID}/n/{n['key']}",
+                "views": n.get("read_count", 0),
+                "likes": n.get("like_count", 0),
+                "sales_yen": 0,
+            }
+        if data.get("last_page") or not notes:
+            break
+    return list(articles.values())
+
+
+def _parse_int(s: str) -> int:
+    s = s.replace(",", "").strip()
+    return int(s) if s.isdigit() else 0
+
+
+def _fetch_sales_from_dashboard(page) -> dict[str, int]:
+    """ダッシュボードの記事表を「全期間・売上順」にし、{タイトル: 売上円} を返す。"""
+    page.goto("https://note.com/dashboard", wait_until="networkidle", timeout=60000)
+    time.sleep(4)
+    for value in ("ALL", "SALES_DESC"):
+        selected = False
+        for sel in page.query_selector_all("select"):
+            options = sel.evaluate("e => Array.from(e.options).map(o => o.value)")
+            if value in options:
+                sel.select_option(value)
+                selected = True
+                time.sleep(5)
+                break
+        if not selected:
+            logger.warning(f"ダッシュボードの選択肢 {value} が見つかりません（画面変更の可能性）")
+            return {}
+
+    lines = page.inner_text("body").split("\n")
+    sales = {}
+    for i, line in enumerate(lines):
+        if line.strip() != "公開中":
+            continue
+        title = next((lines[j].strip() for j in range(i - 1, -1, -1) if lines[j].strip()), "")
+        row = next((lines[j] for j in range(i + 1, min(i + 4, len(lines))) if "\t" in lines[j]), "")
+        cells = row.strip().split("\t")
+        if not title or len(cells) < 5:
+            continue
+        yen = _parse_int(cells[-1])
+        if yen <= 0:
+            break  # 売上順なので以降は売上なし
+        sales[title] = yen
+    return sales
 
 
 def scrape_note_stats() -> list[dict]:
-    """note.com のクリエイターダッシュボードから記事統計を取得する"""
-    import base64
-
-    session_b64 = os.environ.get("NOTE_SESSION_B64", "").strip()
-    session_file = Path("output/note_session.json")
-
-    storage_state = None
-    if session_b64:
-        storage_state = json.loads(base64.b64decode(session_b64).decode("utf-8"))
-    elif session_file.exists():
-        with open(session_file, encoding="utf-8") as f:
-            storage_state = json.load(f)
-
+    storage_state = _load_storage_state()
     if not storage_state:
         logger.error("セッションが見つかりません")
         return []
 
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        logger.error("playwright未インストール")
-        return []
-
-    articles = []
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
         )
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
-            storage_state=storage_state,
-        )
+        context = browser.new_context(viewport={"width": 1400, "height": 1000}, storage_state=storage_state)
         page = context.new_page()
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
         try:
-            # note.com の stats ページ
-            logger.info("note stats ページを取得中...")
-            page.goto("https://note.com/stats", wait_until="networkidle", timeout=30000)
-            _wait(3)
-
-            # ログイン確認
-            if "login" in page.url.lower():
-                logger.error("セッション期限切れ: ログインページにリダイレクト")
+            page.goto("https://note.com/dashboard", wait_until="networkidle", timeout=60000)
+            if not _fetch_json(page, "/api/v2/current_user/email"):
+                logger.error("セッション期限切れ: 統計を取得できません")
                 return []
 
-            # 記事一覧テーブルを取得（note.comのstatsページ構造に合わせて調整）
-            articles = _parse_stats_page(page)
-            logger.info(f"記事統計取得: {len(articles)}件")
+            articles = _fetch_pv_stats(page)
+            logger.info(f"PV統計取得: {len(articles)}件")
 
-            # データが少ない場合はAPIエンドポイントを試す
-            if len(articles) < 3:
-                articles = _try_api_stats(page, articles)
+            try:
+                sales = _fetch_sales_from_dashboard(page)
+            except Exception as e:
+                logger.warning(f"売上取得失敗: {e}")
+                sales = {}
+            logger.info(f"売上のある記事: {len(sales)}件 / 合計{sum(sales.values())}円")
 
+            by_title = {a["title"]: a for a in articles}
+            for title, yen in sales.items():
+                if title in by_title:
+                    by_title[title]["sales_yen"] = yen
+                else:
+                    articles.append({"key": "", "title": title, "url": "", "views": 0, "likes": 0, "sales_yen": yen})
+            return articles
         except Exception as e:
             logger.error(f"stats取得失敗: {e}")
+            return []
         finally:
             browser.close()
 
-    return articles
 
-
-def _parse_stats_page(page) -> list[dict]:
-    """statsページのHTMLから記事データを抽出"""
-    articles = []
+def _free_part(key: str, limit: int = 500) -> str:
+    """売れた記事の無料部分（購入の決め手になった文章）を取得する"""
+    if not key:
+        return ""
+    import requests
     try:
-        # note.com stats のテーブル行を取得
-        rows = page.evaluate("""
-            () => {
-                const results = [];
-
-                // statsページのテーブル行
-                const rows = document.querySelectorAll('table tr, [class*="stats"] [class*="row"], [class*="Stats"] [class*="Row"]');
-                rows.forEach(row => {
-                    const titleEl = row.querySelector('a[href*="/n/"]');
-                    if (!titleEl) return;
-
-                    const href = titleEl.getAttribute('href') || '';
-                    const title = titleEl.textContent?.trim() || '';
-                    const cells = row.querySelectorAll('td');
-
-                    // 数値セルから統計を取得
-                    const nums = Array.from(cells).map(c => c.textContent?.trim().replace(/,/g, '') || '0');
-
-                    results.push({
-                        title: title,
-                        url: href,
-                        raw_nums: nums,
-                    });
-                });
-
-                // リスト形式のstats（別レイアウト）
-                const items = document.querySelectorAll('[class*="noteItem"], [class*="NoteItem"], [class*="article-row"]');
-                items.forEach(item => {
-                    const titleEl = item.querySelector('a[href*="/n/"]');
-                    if (!titleEl) return;
-
-                    const title = titleEl.textContent?.trim() || '';
-                    const href = titleEl.getAttribute('href') || '';
-
-                    // ビュー数・スキ数・コメント数を探す
-                    const numEls = item.querySelectorAll('[class*="count"], [class*="Count"], [class*="num"], [class*="Num"]');
-                    const nums = Array.from(numEls).map(el => el.textContent?.trim().replace(/,/g, '') || '0');
-
-                    if (title && !results.find(r => r.url === href)) {
-                        results.push({ title, url: href, raw_nums: nums });
-                    }
-                });
-
-                return results;
-            }
-        """)
-
-        for row in rows:
-            nums = [_parse_num(n) for n in row.get("raw_nums", [])]
-            articles.append({
-                "title": row["title"],
-                "url": row["url"],
-                "views": nums[0] if len(nums) > 0 else 0,
-                "likes": nums[1] if len(nums) > 1 else 0,
-                "comments": nums[2] if len(nums) > 2 else 0,
-                "purchases": nums[3] if len(nums) > 3 else 0,
-            })
-
-    except Exception as e:
-        logger.warning(f"statsページパース失敗: {e}")
-
-    return articles
-
-
-def _try_api_stats(page, existing: list) -> list:
-    """note.com の内部APIから統計を補完取得"""
-    try:
-        response = page.evaluate("""
-            async () => {
-                try {
-                    const r = await fetch('https://note.com/api/v2/stats/note?sort=view&page=1', {credentials: 'include'});
-                    return await r.json();
-                } catch(e) { return null; }
-            }
-        """)
-
-        if not response or "data" not in response:
-            return existing
-
-        api_articles = []
-        for item in response["data"].get("notes", []):
-            api_articles.append({
-                "title": item.get("name", ""),
-                "url": item.get("noteUrl", ""),
-                "views": item.get("viewCount", 0),
-                "likes": item.get("likeCount", 0),
-                "comments": item.get("commentCount", 0),
-                "purchases": item.get("purchaseCount", 0),
-            })
-        logger.info(f"API統計取得: {len(api_articles)}件")
-        return api_articles if api_articles else existing
-
-    except Exception as e:
-        logger.warning(f"API stats失敗: {e}")
-        return existing
-
-
-def _parse_num(s: str) -> int:
-    try:
-        return int(str(s).replace(",", "").replace("−", "0") or "0")
+        r = requests.get(f"https://note.com/api/v3/notes/{key}", headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        body = r.json().get("data", {}).get("body") or ""
+        text = re.sub(r"\n+", "\n", re.sub(r"<[^>]+>", "\n", body)).strip()
+        return text[:limit]
     except Exception:
-        return 0
+        return ""
 
 
 def analyze_and_update_strategy(articles: list[dict]) -> str:
-    """Geminiで記事パフォーマンスを分析し、戦略テキストを生成"""
-    if not articles:
-        logger.warning("分析対象データなし")
-        return ""
-
-    gemini = GeminiClient()
+    sold = sorted([a for a in articles if a["sales_yen"] > 0], key=lambda a: -a["sales_yen"])
+    unsold = [a for a in articles if a["sales_yen"] == 0]
+    top_views = sorted(unsold, key=lambda a: (-a["views"], -a["likes"]))[:8]
 
     def _line(a: dict) -> str:
-        like_rate = (a["likes"] / a["views"] * 100) if a["views"] else 0.0
-        return (
-            f"- タイトル: {a['title']}\n"
-            f"  ビュー: {a['views']} / スキ: {a['likes']}（スキ率{like_rate:.1f}%）"
-            f" / 購入: {a['purchases']}\n"
-        )
+        return f"- {a['title']}（PV {a['views']} / スキ {a['likes']} / 売上 {a['sales_yen']}円）\n"
 
-    # 「売れる・刺さる」順 = 購入数 > スキ数 > ビュー数 で評価
-    sorted_by_sales = sorted(
-        articles, key=lambda x: (x["purchases"], x["likes"], x["views"]), reverse=True
-    )
-    top5 = sorted_by_sales[:5]
-    bottom5 = sorted_by_sales[-5:] if len(sorted_by_sales) > 5 else []
+    sold_text = ""
+    for a in sold[:6]:
+        sold_text += _line(a)
+        excerpt = _free_part(a["key"])
+        if excerpt:
+            sold_text += f"  【無料部分の冒頭】\n  {excerpt.replace(chr(10), chr(10) + '  ')}\n"
 
-    stats_text = "【売れている・スキされている記事（購入数→スキ数順）】\n"
-    for a in top5:
-        stats_text += _line(a)
+    prompt = f"""あなたはnote.comの有料占い記事の販売分析者です。
+実データから「どんな文章なら買われるか」を読み取り、次回以降の記事の書き手への指示を作ってください。
 
-    if bottom5:
-        stats_text += "\n【反応が取れていない記事】\n"
-        for a in bottom5:
-            stats_text += _line(a)
+【実際に購入された記事（タイトル・数値・購入前に読まれた無料部分）】
+{sold_text or "（まだ購入なし）"}
 
-    prompt = f"""あなたはnote.comの占い記事のマーケティング分析者です。
-以下の記事パフォーマンスデータを分析し、「どんな文章なら売れるか」を考察して、
-次回以降の記事で実践すべき改善戦略を日本語で提案してください。
+【読まれたが購入されなかった記事（PV上位）】
+{"".join(_line(a) for a in top_views)}
 
-{stats_text}
-
-以下の観点で分析してください：
-1. 購入・スキにつながっている記事のタイトルパターン（どんな言葉・構造が効いているか）
-2. スキ率が高い記事の共通点（星座・テーマ・言い回し・感情の扱い方）
-3. 次回記事のタイトルで使うべきキーワード・避けるべきキーワード
-4. 無料ティーザーで「続きを買いたくなる」ために強調すべきポイント
-5. 有料部分で読者が満足し、次も買いたくなる内容の方向性
+分析の観点：
+1. 購入された記事の無料部分に共通する書き方（具体性・感情への触れ方・寸止めの位置・スコアや目次の見せ方）
+2. 読まれたのに買われなかった記事との違い
+3. タイトルで効いている言葉と、避けるべき言葉
 
 出力形式：
-- 箇条書きで簡潔に（合計200〜300文字）
-- 即実践できる具体的なアドバイスのみ
-- 分析の説明ではなく「次回はこうせよ」という指示形式で書く
+- 「次回はこうせよ」という指示だけを箇条書きで6〜8個（合計300〜400文字）
+- 実データから言えることだけを書く。サンプルが少ない場合は断定しすぎない
 """
-
-    strategy = gemini.generate(prompt, max_tokens=1024, temperature=0.7)
+    gemini = GeminiClient()
+    strategy = gemini.generate(prompt, max_tokens=4096, temperature=0.5)
     logger.info(f"戦略生成完了: {len(strategy)}文字")
     return strategy
 
 
 def save_stats(articles: list[dict]):
-    """統計データをJSONファイルに保存"""
     STATS_DIR.mkdir(parents=True, exist_ok=True)
     today = date.today().isoformat()
     stats_file = STATS_DIR / f"stats_{today}.json"
@@ -269,35 +228,25 @@ def save_stats(articles: list[dict]):
 
 
 def save_strategy(strategy: str):
-    """戦略テキストを保存（次回投稿時に読み込まれる）"""
     STRATEGY_DIR.mkdir(parents=True, exist_ok=True)
     with open(STRATEGY_FILE, "w", encoding="utf-8") as f:
         f.write(strategy)
     logger.info(f"戦略更新: {STRATEGY_FILE}")
 
 
-def _wait(seconds: float):
-    import random
-    time.sleep(seconds + random.uniform(0, 0.3))
-
-
 def main():
     logger.info("=== パフォーマンス分析開始 ===")
 
-    # 1. note.com から統計取得
     articles = scrape_note_stats()
-
-    if articles:
-        save_stats(articles)
-
-        # 2. Gemini で分析・戦略生成
-        strategy = analyze_and_update_strategy(articles)
-        if strategy:
-            save_strategy(strategy)
-            logger.info("戦略更新完了")
-            print(f"\n=== 新しい戦略 ===\n{strategy}\n")
-    else:
+    if not articles:
         logger.warning("統計データ取得失敗 → 前回の戦略を維持")
+        return
+
+    save_stats(articles)
+    strategy = analyze_and_update_strategy(articles)
+    if strategy:
+        save_strategy(strategy)
+        print(f"\n=== 新しい戦略 ===\n{strategy}\n")
 
     logger.info("=== パフォーマンス分析完了 ===")
 

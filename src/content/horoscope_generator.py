@@ -17,38 +17,38 @@ STRATEGY_FILE = Path(__file__).parent.parent.parent / "output" / "strategy" / "c
 
 WEEKDAY_JP = ["月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"]
 
-# 引き込むタイトルワード（調査データに基づく）
+# タイトルは (型, 重み)。重みは note の販売実績・PV実績（2026-03〜09、全948記事）で設定。
+# 売れた型を多く出しつつ、低重みの型を探索枠として残し、次の分析で入れ替えられるようにする。
 WEEKLY_TITLE_PATTERNS = [
-    "【{sign}】週間運勢 {week}｜{angle}",
-    "{sign}さんへ。今週の正直な運勢 {week}",
-    "【{sign}】{week} 当たりすぎ注意の週間占い",
-    "{sign}の今週（{week}）｜{angle}",
-    "【保存版】{sign}の週間運勢 {week}｜恋愛・仕事・金運",
+    ("【保存版】{sign}の週間運勢 {week}｜恋愛・仕事・金運", 3),
+    ("{sign}の今週（{week}）｜{angle}", 3),
+    ("【{sign}】週間運勢 {week}｜{angle}", 1),
+    ("{sign}さんへ。今週の正直な運勢 {week}", 1),
+    ("【{sign}】{week} 当たりすぎ注意の週間占い", 1),
 ]
 
 WEEKLY_ANGLE_WORDS = [
-    "恋愛・仕事・金運の全真実",
-    "今週あなたに起きること",
-    "転機が来る人・来ない人",
-    "動くべき日・休むべき日",
-    "彼の気持ちと仕事運の完全鑑定",
-    "今週の運命的な分岐点",
-    "天使の日はいつ？完全鑑定",
+    ("今週の運命的な転機を読む", 3),
+    ("恋愛・仕事・金運の全真実", 2),
+    ("彼の気持ちと仕事運の完全鑑定", 2),
+    ("今週あなたに起きること", 1),
+    ("転機が来る人・来ない人", 1),
+    ("動くべき日・休むべき日", 1),
 ]
 
 MONTHLY_TITLE_PATTERNS = [
-    "【{sign}】{month} プレミアム月次鑑定｜{angle}",
-    "{sign}さんへ。{month}の本当の運勢",
-    "【{sign}・{month}】当たりすぎ注意の月次占い完全版",
-    "【保存版】{sign}の{month}｜{angle}",
+    ("【保存版】{sign}の{month}｜{angle}", 4),
+    ("【{sign}】{month} プレミアム月次鑑定｜{angle}", 1),
+    ("{sign}さんへ。{month}の本当の運勢", 1),
+    ("【{sign}・{month}】当たりすぎ注意の月次占い完全版", 1),
 ]
 
 MONTHLY_ANGLE_WORDS = [
-    "恋愛・仕事・財運 完全解説",
-    "今月あなたの人生に何が起きるか",
-    "転機の月？詳細鑑定で答えを出す",
-    "今月こそ動くべき理由と戦略",
-    "天体メッセージ×タロット完全版",
+    ("天体メッセージ×タロット完全版", 4),
+    ("恋愛・仕事・財運 完全解説", 1),
+    ("今月あなたの人生に何が起きるか", 1),
+    ("転機の月？詳細鑑定で答えを出す", 1),
+    ("今月こそ動くべき理由と戦略", 1),
 ]
 
 
@@ -79,52 +79,47 @@ def _random_stars(min_val: int = 2, max_val: int = 5) -> str:
     return "★" * n + "☆" * (5 - n)
 
 
+def _pick(weighted: list) -> str:
+    items, weights = zip(*weighted)
+    return random.choices(items, weights=weights, k=1)[0]
+
+
 def generate_weekly_title(sign: dict, week_label: str) -> str:
     """週次記事の引き込むタイトルを生成（25〜30文字）"""
-    pattern = random.choice(WEEKLY_TITLE_PATTERNS)
-    angle = random.choice(WEEKLY_ANGLE_WORDS)
-    title = pattern.format(
-        sign=sign["name"],
-        week=week_label,
-        angle=angle,
+    return _pick(WEEKLY_TITLE_PATTERNS).format(
+        sign=sign["name"], week=week_label, angle=_pick(WEEKLY_ANGLE_WORDS)
     )
-    return title
 
 
 def generate_monthly_title(sign: dict, month_str: str) -> str:
     """月次記事の引き込むタイトルを生成"""
-    pattern = random.choice(MONTHLY_TITLE_PATTERNS)
-    angle = random.choice(MONTHLY_ANGLE_WORDS)
-    title = pattern.format(
-        sign=sign["name"],
-        month=month_str,
-        angle=angle,
+    return _pick(MONTHLY_TITLE_PATTERNS).format(
+        sign=sign["name"], month=month_str, angle=_pick(MONTHLY_ANGLE_WORDS)
     )
-    return title
 
 
+# 日次で売れた3本はすべて「｜切り口」付きの型。切り口なしの型（〜さんへ。正直な運勢／当たりすぎ注意）と
+# 【保存版】はPV下位で売上0のため外した。「今日動くべき時間と避ける時間」はPV・スキとも最下位。
 DAILY_TITLE_PATTERNS = [
-    "【{sign}】{date}の運勢｜{angle}",
-    "{sign}さんへ。今日（{date}）の正直な運勢",
-    "【{sign}・{date}】当たりすぎ注意の今日の占い",
-    "【保存版】{sign}の{date}｜{angle}",
-    "{sign}の今日（{date}）｜{angle}",
+    ("【{sign}】{date}の運勢｜{angle}", 3),
+    ("{sign}の今日（{date}）｜{angle}", 3),
+    ("【{sign}・{date}】{angle}", 1),
 ]
 
 DAILY_ANGLE_WORDS = [
-    "恋愛・仕事・金運の全真実",
-    "今日あなたに起きること",
-    "パワータイムはいつ？完全鑑定",
-    "今日動くべき時間と避ける時間",
-    "今日の運命的な転機を読む",
+    ("今日の運命的な転機を読む", 4),
+    ("恋愛・仕事・金運の全真実", 3),
+    ("パワータイムはいつ？完全鑑定", 1),
+    ("あの人の本音と今日の金運", 1),
+    ("今日、流れが変わる瞬間", 1),
 ]
 
 
 def generate_daily_title(sign: dict, date_str: str) -> str:
     """日次記事のタイトルを生成"""
-    pattern = random.choice(DAILY_TITLE_PATTERNS)
-    angle = random.choice(DAILY_ANGLE_WORDS)
-    return pattern.format(sign=sign["name"], date=date_str, angle=angle)
+    return _pick(DAILY_TITLE_PATTERNS).format(
+        sign=sign["name"], date=date_str, angle=_pick(DAILY_ANGLE_WORDS)
+    )
 
 
 class HoroscopeGenerator:

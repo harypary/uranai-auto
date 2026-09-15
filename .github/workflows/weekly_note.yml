@@ -4,7 +4,13 @@ on:
   schedule:
     - cron: '30 22 * * 0'   # 月曜 7:30 JST（主）
     - cron: '30 23 * * 0'   # 月曜 8:30 JST（バックアップ）
+    - cron: '30 22 * * 1'   # 火曜 7:30 JST（月曜に投稿しきれなかった星座の穴埋め）
   workflow_dispatch:
+
+# 並走すると同じ星座を二重投稿するため常に1本だけ走らせる
+concurrency:
+  group: weekly-note
+  cancel-in-progress: false
 
 jobs:
   post-weekly-note:
@@ -134,11 +140,13 @@ jobs:
           path: output/post_log.json
           key: post-log-${{ github.run_id }}
 
+      # GITHUB_TOKEN ではリポジトリ変数を書き換えられない（403）ため GH_PAT を使う
       - name: Update WEEKLY_NOTE_URL repository variable
-        if: steps.post_1.outputs.weekly_note_url != '' || steps.post_2.outputs.weekly_note_url != '' || steps.post_3.outputs.weekly_note_url != ''
+        if: always() && (steps.post_1.outputs.weekly_note_url != '' || steps.post_2.outputs.weekly_note_url != '' || steps.post_3.outputs.weekly_note_url != '')
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GH_PAT }}
           script: |
             const url = '${{ steps.post_1.outputs.weekly_note_url || steps.post_2.outputs.weekly_note_url || steps.post_3.outputs.weekly_note_url }}';
             if (url && url.startsWith('https://')) {

@@ -10,16 +10,19 @@ from src.utils.logger import get_logger
 
 logger = get_logger("gemini_client")
 
-# モデルは廃止・無料枠変更があるため複数候補を順に試す（先頭が優先）。
+# 無料枠はモデルごとに別枠（1日あたり）なので、候補を多く並べるほど1日に生成できる本数が増える。
+# 2026-09-15 時点で無料枠で応答を確認済みのモデルのみ（gemini-2.0-flash 系は廃止で404）。
 # 環境変数 GEMINI_MODEL で先頭を上書き可能。
-# 注: gemini-2.0-flash は当プロジェクトの無料枠が limit:0（429即時）なので後方に降格。
-#     gemini-2.5-flash を先頭にする（gemini-1.5-flash は廃止済みで404）。
 DEFAULT_MODELS = [
     "gemini-2.5-flash",
-    "gemini-flash-latest",       # 実体は gemini-3.5-flash（別の20req/日枠）
-    "gemini-2.5-flash-lite",     # 別quota枠のliteモデル
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
 ]
 
 
@@ -66,7 +69,9 @@ class GeminiClient:
                         contents=prompt,
                         config=config,
                     )
-                    result = response.text.strip()
+                    result = (response.text or "").strip()
+                    if not result:
+                        raise RuntimeError("EMPTY_RESPONSE")
                     if model_name != self.active_model:
                         logger.info(f"モデル切替: {self.active_model} → {model_name}")
                         self.active_model = model_name
@@ -87,6 +92,10 @@ class GeminiClient:
                     # 1日あたりの無料枠を使い切った429 → 待っても当日中は回復しないため即次のモデルへ
                     if "RESOURCE_EXHAUSTED" in msg and "PerDay" in msg:
                         logger.warning(f"モデル {model_name} は本日の無料枠を使い切り(PerDay)。次の候補へフォールバック")
+                        break
+                    # 思考トークンで出力枠を使い切ると本文が空になる。同じモデルで再試行しても同じ結果になりやすい
+                    if "EMPTY_RESPONSE" in msg:
+                        logger.warning(f"モデル {model_name} の応答が空。次の候補へフォールバック")
                         break
                     # それ以外（レート制限・一時障害）→ バックオフしてリトライ
                     wait = self.RETRY_BASE_DELAY * (attempt + 1)

@@ -32,7 +32,7 @@ SESSION_FILE = Path(__file__).parent.parent / "output" / "note_session.json"
 
 NOTE_EMAIL    = os.getenv("NOTE_EMAIL", "")
 NOTE_PASSWORD = os.getenv("NOTE_PASSWORD", "")
-GITHUB_PAT    = os.getenv("GH_PAT", "")
+GITHUB_PAT    = os.getenv("GH_PAT") or os.getenv("GITHUB_PAT", "")
 GITHUB_REPO   = os.getenv("GITHUB_REPO", "")  # "username/repo"
 
 
@@ -131,10 +131,11 @@ def login_and_save_session() -> dict:
         time.sleep(2)
 
         # 入力欄はnote.com側の改修でセレクタが変わるため複数候補を順に試す
-        # （2026-08時点: <input type="text" id="email"> でname属性なし）
+        # （2026-08時点: id="email" / 2026-09時点: <input type="text" name="login">）
         _fill_first(
             page,
             [
+                'input[name="login"]',
                 "#email",
                 'input[name="email"]',
                 'input[type="email"]',
