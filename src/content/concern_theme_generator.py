@@ -76,12 +76,26 @@ def generate_new_theme(
         existing="\n".join(f"- {t}" for t in existing_titles) or "（なし）",
         extra_constraint=_LOVE_CONSTRAINT if group == "love" else _GENERAL_CONSTRAINT,
     )
-    raw = gemini.generate(prompt, max_tokens=1024, temperature=0.95)
-    data = _extract_json(raw)
-
-    missing = [k for k in _REQUIRED_KEYS if k not in data]
-    if missing:
-        raise ValueError(f"必須キー不足 {missing}: {data}")
+    # 思考型モデル（gemini-3.x系）は出力枠を思考に使うため、1024トークンではJSONが
+    # 書き切れず途中で切れる。枠を広げ、それでも壊れていれば作り直す。
+    data = None
+    last_error: Exception | None = None
+    for attempt in range(3):
+        raw = gemini.generate(prompt, max_tokens=8192, temperature=0.95)
+        try:
+            candidate = _extract_json(raw)
+            missing = [k for k in _REQUIRED_KEYS if k not in candidate]
+            if missing:
+                raise ValueError(f"必須キー不足 {missing}")
+            data = candidate
+            break
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"新テーマJSONの解析に失敗 (試行{attempt + 1}/3): {str(e)[:150]} / 応答先頭={raw[:120]!r}"
+            )
+    if data is None:
+        raise ValueError(f"新テーマを生成できませんでした: {last_error}")
 
     # キーの正規化＋重複回避
     base_key = _slugify(str(data["key"]), len(existing_themes))
@@ -95,8 +109,15 @@ def generate_new_theme(
     # hashtags が文字列で返ってきた場合に配列化
     if isinstance(data["hashtags"], str):
         data["hashtags"] = [h.strip() for h in re.split(r"[,、\s]+", data["hashtags"]) if h.strip()]
-    if "星座占い" not in data["hashtags"]:
-        data["hashtags"].append("星座占い")
+    # note の入力欄は「#」不要。「#星座占い」と「星座占い」が二重に入らないよう正規化する
+    tags = []
+    for h in data["hashtags"]:
+        t = str(h).lstrip("#").strip()
+        if t and t not in tags:
+            tags.append(t)
+    if "星座占い" not in tags:
+        tags.append("星座占い")
+    data["hashtags"] = tags[:5]
 
     data["price"] = NEW_THEME_PRICE
     data["group"] = group
