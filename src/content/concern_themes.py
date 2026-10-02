@@ -64,6 +64,68 @@ CONCERN_THEMES = [
 ]
 
 
+# 恋愛に絞った特化テーマ（日曜枠）。恋愛は占いで最も需要が大きく、悩みが深いほど課金される。
+LOVE_THEMES = [
+    {
+        "key": "love_his_feelings",
+        "group": "love",
+        "title": "あの人の本音占い｜今あなたをどう思っている？",
+        "audience": "好きな人が自分をどう思っているのか分からず、関係が進まないまま苦しい",
+        "keyword": "あの人の本音",
+        "core_question": "あの人が今あなたに抱いている本当の気持ちは何か、関係は進むのか",
+        "bullets": "・あの人が今あなたに抱いている本当の感情\n・あの人があなたに言えずにいること\n・二人の関係が動き出す時期とあなたが取るべき行動",
+        "hashtags": ["恋愛占い", "片思い", "本音", "占い", "星座占い"],
+        "price": 1980,
+    },
+    {
+        "key": "love_unrequited",
+        "group": "love",
+        "title": "片思い成就占い｜この恋は叶う？",
+        "audience": "片思いが報われるのか、諦めるべきなのか分からず動けない",
+        "keyword": "片思いの行方",
+        "core_question": "この片思いは叶うのか、叶うとしたらいつ・何をすればいいのか",
+        "bullets": "・この恋が叶う可能性と、その時期\n・あの人の心が動く瞬間ときっかけ\n・今のあなたがやってはいけないこと",
+        "hashtags": ["片思い", "恋愛占い", "恋愛成就", "占い", "星座占い"],
+        "price": 1980,
+    },
+    {
+        "key": "love_should_i_leave",
+        "group": "love",
+        "title": "別れるべきか占い｜この人と続けていい？",
+        "audience": "今の相手と続けるべきか別れるべきか、何年も迷い続けている",
+        "keyword": "別れの決断",
+        "core_question": "この相手と続けるべきか別れるべきか、星はどちらを示しているのか",
+        "bullets": "・この関係が今あなたにもたらしているもの\n・続けた場合と別れた場合、それぞれの未来\n・決断すべき時期の見極め方",
+        "hashtags": ["恋愛占い", "別れ", "恋愛相談", "占い", "星座占い"],
+        "price": 1980,
+    },
+    {
+        "key": "love_silence",
+        "group": "love",
+        "title": "音信不通占い｜あの人から連絡は来る？",
+        "audience": "連絡が途絶えたあの人を待ち続けていて、毎日スマホを見てしまう",
+        "keyword": "音信不通の理由",
+        "core_question": "あの人が連絡をくれない理由は何か、また連絡は来るのか",
+        "bullets": "・あの人が連絡をくれない本当の理由\n・再びつながりが戻る時期\n・待つべきか、あなたから動くべきか",
+        "hashtags": ["音信不通", "恋愛占い", "復縁", "占い", "星座占い"],
+        "price": 1980,
+    },
+    {
+        "key": "love_destiny",
+        "group": "love",
+        "title": "運命の相手占い｜あなたが出会う人の正体",
+        "audience": "本当に自分を愛してくれる相手にまだ出会えていないと感じている",
+        "keyword": "運命の相手",
+        "core_question": "あなたの運命の相手はどんな人で、いつどこで出会うのか",
+        "bullets": "・あなたの運命の相手の特徴（外見・性格・環境）\n・出会いが訪れる時期と場所\n・その出会いを逃さないためにすべきこと",
+        "hashtags": ["運命の人", "恋愛占い", "出会い", "占い", "星座占い"],
+        "price": 1980,
+    },
+]
+
+_GROUPS = {"general": CONCERN_THEMES, "love": LOVE_THEMES}
+
+
 def load_dynamic_themes() -> list[dict]:
     """自動生成された動的テーマを読み込む（ファイルが無ければ空）。"""
     if DYNAMIC_THEMES_FILE.exists():
@@ -76,12 +138,15 @@ def load_dynamic_themes() -> list[dict]:
     return []
 
 
-def load_all_themes() -> list[dict]:
-    """手書き＋動的の全テーマを、keyの重複を除いて返す。"""
-    themes = list(CONCERN_THEMES)
+def load_all_themes(group: str = "general") -> list[dict]:
+    """指定グループの手書き＋動的テーマを、keyの重複を除いて返す。
+
+    group を持たない既存の動的テーマは "general" として扱う（後方互換）。
+    """
+    themes = list(_GROUPS.get(group, CONCERN_THEMES))
     seen = {t["key"] for t in themes}
     for t in load_dynamic_themes():
-        if t.get("key") and t["key"] not in seen:
+        if t.get("key") and t["key"] not in seen and t.get("group", "general") == group:
             themes.append(t)
             seen.add(t["key"])
     return themes
@@ -98,7 +163,8 @@ def save_dynamic_theme(theme: dict) -> None:
 
 
 def get_theme(key: str) -> dict | None:
-    for t in load_all_themes():
-        if t["key"] == key:
-            return t
+    for group in _GROUPS:
+        for t in load_all_themes(group):
+            if t["key"] == key:
+                return t
     return None

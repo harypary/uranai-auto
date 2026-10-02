@@ -12,8 +12,10 @@ from src.utils.logger import get_logger
 
 logger = get_logger("concern_theme_generator")
 
-# 新テーマの価格（深い本格鑑定なので高単価帯から選ぶ）
-_NEW_THEME_PRICES = [1780, 1980]
+NEW_THEME_PRICE = 1980
+
+_LOVE_CONSTRAINT = "- 必ず恋愛領域（片思い・復縁・結婚・不安・すれ違い・別れ・出会い）のテーマにすること"
+_GENERAL_CONSTRAINT = "- 恋愛・結婚・仕事・お金・人間関係・人生・健康運など、課金されやすい領域から選ぶこと"
 
 _PROMPT = """あなたは占い・スピリチュアル系の有料note記事を企画するプロの編集者です。
 日本の検索ユーザーが「お金を払ってでも占ってほしい」と切実に悩む、新しい鑑定テーマを1つ考えてください。
@@ -23,7 +25,8 @@ _PROMPT = """あなたは占い・スピリチュアル系の有料note記事を
 
 【条件】
 - 上のテーマと内容が被らない、新しい切り口の悩みであること
-- 検索流入が見込め、悩みが深く課金されやすい領域（恋愛・結婚・仕事・お金・人間関係・人生・健康運など）
+- 検索流入が見込め、悩みが深く課金されやすい領域であること
+{extra_constraint}
 - 星座占いで12星座それぞれに個別鑑定できるテーマであること
 
 【出力】以下のJSONだけを出力してください。前後に説明文やコードブロック記号を付けないこと。
@@ -59,12 +62,20 @@ def _slugify(key: str, fallback_index: int) -> str:
     return key or f"dyn_{fallback_index}"
 
 
-def generate_new_theme(gemini: GeminiClient, existing_themes: list[dict]) -> dict:
-    """既存テーマと被らない新しい悩みテーマを1つ生成して返す。"""
+def generate_new_theme(
+    gemini: GeminiClient, existing_themes: list[dict], group: str = "general"
+) -> dict:
+    """既存テーマと被らない新しい悩みテーマを1つ生成して返す。
+
+    group="love" のときは恋愛領域に限定したテーマを生成する。
+    """
     existing_titles = [t.get("title", "") for t in existing_themes]
     existing_keys = {t.get("key", "") for t in existing_themes}
 
-    prompt = _PROMPT.format(existing="\n".join(f"- {t}" for t in existing_titles) or "（なし）")
+    prompt = _PROMPT.format(
+        existing="\n".join(f"- {t}" for t in existing_titles) or "（なし）",
+        extra_constraint=_LOVE_CONSTRAINT if group == "love" else _GENERAL_CONSTRAINT,
+    )
     raw = gemini.generate(prompt, max_tokens=1024, temperature=0.95)
     data = _extract_json(raw)
 
@@ -87,7 +98,8 @@ def generate_new_theme(gemini: GeminiClient, existing_themes: list[dict]) -> dic
     if "星座占い" not in data["hashtags"]:
         data["hashtags"].append("星座占い")
 
-    data["price"] = _NEW_THEME_PRICES[len(existing_themes) % len(_NEW_THEME_PRICES)]
+    data["price"] = NEW_THEME_PRICE
+    data["group"] = group
 
-    logger.info(f"新テーマ生成: {data['key']} / {data['title']} (¥{data['price']})")
+    logger.info(f"新テーマ生成[{group}]: {data['key']} / {data['title']} (¥{data['price']})")
     return data

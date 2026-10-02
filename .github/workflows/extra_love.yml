@@ -1,0 +1,154 @@
+name: Extra Love - 恋愛特化の鑑定（毎週日曜8:00 JST・1,980円）
+
+on:
+  schedule:
+    - cron: '0 23 * * 6'    # 日曜 8:00 JST（主）
+    - cron: '0 0 * * 0'     # 日曜 9:00 JST（バックアップ）
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: 'テーマkeyを指定（空欄なら未公開の恋愛テーマを自動選択→尽きたら自動生成）'
+        required: false
+        default: ''
+
+concurrency:
+  group: love-note
+  cancel-in-progress: false
+
+jobs:
+  post-love-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright and browsers
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Create output directories
+        run: mkdir -p output/logs output/strategy
+
+      - name: Restore strategy file from cache
+        uses: actions/cache/restore@v4
+        with:
+          path: output/strategy/current_strategy.txt
+          key: strategy-${{ github.run_id }}
+          restore-keys: strategy-
+
+      - name: Restore post log from cache
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ github.run_id }}
+          restore-keys: post-log-
+
+      - name: Validate note.com session
+        id: session_check
+        env:
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+        run: |
+          python scripts/check_session.py && echo "session_ok=true" >> $GITHUB_OUTPUT \
+            || echo "session_ok=false" >> $GITHUB_OUTPUT
+
+      - name: Renew session if expired
+        if: steps.session_check.outputs.session_ok == 'false'
+        continue-on-error: true
+        env:
+          NOTE_EMAIL:    ${{ secrets.NOTE_EMAIL }}
+          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
+          GH_PAT:        ${{ secrets.GH_PAT }}
+          GITHUB_REPO:   ${{ github.repository }}
+        run: |
+          python scripts/renew_note_session.py
+          SESSION_B64=$(python -c "import base64; print(base64.b64encode(open('output/note_session.json','rb').read()).decode())")
+          echo "NOTE_SESSION_B64=$SESSION_B64" >> $GITHUB_ENV
+
+      - name: Post love note (attempt 1/3)
+        id: post_1
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          CONCERN_GROUP: love
+          CONCERN_THEME: ${{ github.event.inputs.theme }}
+          LOG_LEVEL: INFO
+        run: python scripts/run_concern.py
+
+      - name: Post love note (attempt 2/3)
+        id: post_2
+        if: steps.post_1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          CONCERN_GROUP: love
+          CONCERN_THEME: ${{ github.event.inputs.theme }}
+          LOG_LEVEL: INFO
+        run: |
+          sleep 60
+          python scripts/run_concern.py
+
+      - name: Post love note (attempt 3/3)
+        id: post_3
+        if: steps.post_2.outcome == 'failure'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_USER_ID: "0928shoki"
+          CONCERN_GROUP: love
+          CONCERN_THEME: ${{ github.event.inputs.theme }}
+          LOG_LEVEL: DEBUG
+        run: |
+          sleep 90
+          python scripts/run_concern.py
+
+      - name: Save post log to cache
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: output/post_log.json
+          key: post-log-${{ github.run_id }}
+
+      - name: Commit auto-generated themes
+        if: always()
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "GH_PAT 未設定のため新テーマのコミットをスキップ"
+            exit 0
+          fi
+          if [ -n "$(git status --porcelain data/concern_themes_dynamic.json 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add data/concern_themes_dynamic.json
+            git commit -m "chore: 恋愛特化テーマを自動追加"
+            git push "https://x-access-token:${GH_PAT}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
+            echo "新テーマをコミットしました"
+          else
+            echo "新テーマの追加なし"
+          fi
+
+      - name: Upload output artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extra-love-output-${{ github.run_number }}
+          path: |
+            output/logs/
+          retention-days: 14

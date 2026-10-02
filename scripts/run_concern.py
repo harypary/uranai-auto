@@ -47,12 +47,14 @@ def _has_remaining_signs(plog: PostLogger, theme: dict) -> bool:
     )
 
 
-def _select_theme(plog: PostLogger, gemini: GeminiClient) -> dict:
+def _select_theme(plog: PostLogger, gemini: GeminiClient, group: str) -> dict:
     """投稿するテーマを決める。
 
     1. CONCERN_THEME 指定があればそれを優先
     2. 未公開の星座が残る既存テーマを定義順に1つ選ぶ（自然に1テーマずつ消化）
     3. 全テーマ公開済みなら Gemini で新テーマを生成して永続化（永久ループ）
+
+    group は "general"（悩み全般）か "love"（恋愛特化）。枠ごとに別のテーマ群を消化する。
     """
     override = os.environ.get("CONCERN_THEME")
     if override:
@@ -61,26 +63,27 @@ def _select_theme(plog: PostLogger, gemini: GeminiClient) -> dict:
             return t
         logger.warning(f"指定テーマ '{override}' が見つかりません。自動選択にフォールバック")
 
-    all_themes = load_all_themes()
+    all_themes = load_all_themes(group)
     for t in all_themes:
         if _has_remaining_signs(plog, t):
             return t
 
-    logger.info("全テーマが公開済み。新テーマを自動生成します...")
-    new_theme = generate_new_theme(gemini, all_themes)
+    logger.info(f"[{group}] 全テーマが公開済み。新テーマを自動生成します...")
+    new_theme = generate_new_theme(gemini, all_themes, group=group)
     save_dynamic_theme(new_theme)
     return new_theme
 
 
 def main():
+    group = os.environ.get("CONCERN_GROUP", "general")
     gemini = GeminiClient()
     plog = PostLogger()
-    theme = _select_theme(plog, gemini)
+    theme = _select_theme(plog, gemini, group)
     post_type = f"concern_{theme['key']}"
     hashtags_base = theme["hashtags"]
     price = theme["price"]
 
-    logger.info(f"=== 悩み特化投稿開始: {theme['title']} (¥{price}) ===")
+    logger.info(f"=== 悩み特化投稿開始[{group}]: {theme['title']} (¥{price}) ===")
 
     generator = HoroscopeGenerator(gemini)
     note = NotePublisher()
