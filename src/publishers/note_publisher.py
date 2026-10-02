@@ -175,6 +175,9 @@ class NotePublisher:
         self._set_price(page, price)
         _wait(1)
 
+        self._disable_refund_requests(page)
+        _wait(1)
+
         # 有料エリア設定 → 確認
         try:
             page.click('button:has-text("有料エリア設定")', timeout=8000, force=True)
@@ -581,6 +584,9 @@ class NotePublisher:
 
         # ─── 価格設定 ───
         self._set_price(page, price)
+        _wait(1)
+
+        self._disable_refund_requests(page)
         _wait(1)
 
         # ─── 有料エリア設定 → 「このラインより先を有料にする」確認 ───
@@ -1013,6 +1019,35 @@ class NotePublisher:
                 logger.debug(f"価格設定 JSフォールバック: {price}円")
             except Exception as ex:
                 logger.warning(f"価格JS失敗: {ex}")
+
+    def _disable_refund_requests(self, page: Page):
+        """「返金申請の受け付け」をOFFにする。
+
+        初期値がONで、購入後に返金されると売上が消えるため有料記事では必ず切る。
+        チェックボックスに id/name がないのでラベル文言から辿る。
+        """
+        try:
+            result = page.evaluate("""() => {
+                const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'));
+                const cb = cbs.find(c => {
+                    let n = c.closest('label') || c.parentElement;
+                    for (let i = 0; i < 4 && n; i++) {
+                        if ((n.textContent || '').includes('返金申請の受け付け')) return true;
+                        n = n.parentElement;
+                    }
+                    return false;
+                });
+                if (!cb) return 'not_found';
+                if (!cb.checked) return 'already_off';
+                cb.click();
+                return cb.checked ? 'still_on' : 'turned_off';
+            }""")
+            if result in ("turned_off", "already_off"):
+                logger.debug(f"返金申請の受け付け: {result}")
+            else:
+                logger.warning(f"返金申請の受け付けをOFFにできませんでした: {result}")
+        except Exception as e:
+            logger.warning(f"返金設定の変更失敗: {e}")
 
     def _set_hashtags(self, page: Page, hashtags: list):
         """ハッシュタグを設定（設定ページの「ハッシュタグを追加する」入力欄）"""
