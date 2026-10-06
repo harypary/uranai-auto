@@ -8,7 +8,12 @@ Geminiが新テーマを自動生成し data/concern_themes_dynamic.json に追�
 import json
 from pathlib import Path
 
-DYNAMIC_THEMES_FILE = Path(__file__).parent.parent.parent / "data" / "concern_themes_dynamic.json"
+_ROOT = Path(__file__).parent.parent.parent
+DYNAMIC_THEMES_FILE = _ROOT / "data" / "concern_themes_dynamic.json"
+# リポジトリへのコミットは PAT の権限次第で失敗する（403）ため、Actions キャッシュで
+# 運ばれる output/ 配下にも同じ内容を書き、どちらか残っていればテーマを失わないようにする。
+DYNAMIC_THEMES_CACHE = _ROOT / "output" / "concern_themes_dynamic.json"
+_DYNAMIC_FILES = (DYNAMIC_THEMES_FILE, DYNAMIC_THEMES_CACHE)
 
 CONCERN_THEMES = [
     {
@@ -127,15 +132,24 @@ _GROUPS = {"general": CONCERN_THEMES, "love": LOVE_THEMES}
 
 
 def load_dynamic_themes() -> list[dict]:
-    """自動生成された動的テーマを読み込む（ファイルが無ければ空）。"""
-    if DYNAMIC_THEMES_FILE.exists():
+    """自動生成された動的テーマを読み込む（リポジトリ側とキャッシュ側をkeyでマージ）。"""
+    merged: list[dict] = []
+    seen = set()
+    for path in _DYNAMIC_FILES:
+        if not path.exists():
+            continue
         try:
-            data = json.loads(DYNAMIC_THEMES_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return data
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            pass
-    return []
+            continue
+        if not isinstance(data, list):
+            continue
+        for t in data:
+            key = t.get("key") if isinstance(t, dict) else None
+            if key and key not in seen:
+                merged.append(t)
+                seen.add(key)
+    return merged
 
 
 def load_all_themes(group: str = "general") -> list[dict]:
@@ -153,13 +167,13 @@ def load_all_themes(group: str = "general") -> list[dict]:
 
 
 def save_dynamic_theme(theme: dict) -> None:
-    """動的テーマを1件追記して永続化する。"""
-    DYNAMIC_THEMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    """動的テーマを1件追記し、リポジトリ側とキャッシュ側の両方へ保存する。"""
     current = load_dynamic_themes()
     current.append(theme)
-    DYNAMIC_THEMES_FILE.write_text(
-        json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    body = json.dumps(current, ensure_ascii=False, indent=2)
+    for path in _DYNAMIC_FILES:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
 
 
 def get_theme(key: str) -> dict | None:

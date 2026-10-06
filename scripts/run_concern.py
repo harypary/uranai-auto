@@ -138,7 +138,10 @@ def main():
 
     logger.info(f"=== 悩み特化投稿完了: 成功{success_count}件 / 失敗{fail_count}件 ===")
 
-    if fail_count > 0 and success_count == 0:
+    # 1件でも未投稿があれば失敗扱いにし、ジョブ内リトライとバックアップcronで残りを埋める
+    # （公開済みの星座は post_log で判定してスキップされる）
+    if fail_count > 0:
+        logger.error(f"未投稿: {fail_count}件 → ワークフローが再試行します")
         sys.exit(1)
 
 
