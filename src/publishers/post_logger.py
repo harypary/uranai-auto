@@ -131,6 +131,26 @@ def fetch_published_signs(marker: str, max_pages: int = 8) -> set:
     return found
 
 
+def published_url_if_live(note_key: str) -> str | None:
+    """記事キーが公開済みならその公開URLを返す。下書きのままなら None。
+
+    公開直後は確認が404を返すことがあり、その記事を「未投稿」とみなして作り直すと
+    同じ記事が増える。再投稿の前にこれで実態を確かめる。
+    """
+    import requests
+
+    try:
+        r = requests.get(
+            f"https://note.com/{NOTE_USER_ID}/n/{note_key}",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=10,
+        )
+        if r.status_code == 200:
+            return f"https://note.com/{NOTE_USER_ID}/n/{note_key}"
+    except Exception:
+        pass
+    return None
+
+
 def fetch_published_titles(marker: str, max_pages: int = 3) -> list:
     """note.com 上で、タイトルに marker を含む公開記事のタイトル一覧を返す。"""
     import requests

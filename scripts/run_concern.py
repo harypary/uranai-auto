@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -30,7 +31,12 @@ from src.content.concern_themes import (
 )
 from src.content.concern_theme_generator import generate_new_theme
 from src.publishers.note_publisher import NotePublisher
-from src.publishers.post_logger import PostLogger, infer_published
+from src.publishers.post_logger import (
+    PostLogger,
+    fetch_published_signs,
+    infer_published,
+    published_url_if_live,
+)
 from src.utils.astrology_data import ZODIAC_SIGNS
 from src.utils.logger import get_logger
 
@@ -91,13 +97,46 @@ def main():
     success_count = 0
     fail_count = 0
 
+    # post_log は Actions キャッシュ依存で欠落しうる。note.com 本体を正として
+    # 同じテーマの記事が既にある星座を除外する（常設記事なので全期間を深く見る）
+    already_on_note = fetch_published_signs(theme["title"], max_pages=30)
+    if already_on_note:
+        logger.info(f"note.comで公開済みの星座: {len(already_on_note)}件")
+
     for i, sign in enumerate(ZODIAC_SIGNS):
         sign_en = sign["en"]
         hashtags = [sign["name"]] + hashtags_base
 
-        if plog.is_published(post_type, PERIOD, sign_en):
+        if plog.is_published(post_type, PERIOD, sign_en) or sign_en in already_on_note:
             logger.info(f"[{i+1}/12] {sign['name']} → 既に公開済みのためスキップ")
             success_count += 1
+            continue
+
+        # 公開確認が404で遅れただけの記事を作り直すと同じ記事が増えるため、
+        # 前回「未確認」で残した下書きは新規作成せず公開フローだけやり直す
+        draft_url = plog.get_draft_url(post_type, PERIOD, sign_en)
+        if draft_url:
+            m = re.search(r"/notes/(n[a-f0-9]+)", draft_url)
+            live = published_url_if_live(m.group(1)) if m else None
+            if live:
+                logger.info(f"[{i+1}/12] {sign['name']} → 実は公開済み: {live}")
+                plog.record_published(post_type, PERIOD, sign_en, live)
+                success_count += 1
+                continue
+            try:
+                logger.info(f"[{i+1}/12] {sign['name']} 下書きから公開: {draft_url}")
+                url = note.publish_existing_draft(draft_url, price=price, hashtags=hashtags)
+                if infer_published(url):
+                    plog.record_published(post_type, PERIOD, sign_en, url)
+                    success_count += 1
+                else:
+                    logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
+                    fail_count += 1
+            except Exception as e:
+                logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
+                fail_count += 1
+            if i < len(ZODIAC_SIGNS) - 1:
+                time.sleep(POST_INTERVAL)
             continue
 
         try:
@@ -125,7 +164,9 @@ def main():
                 logger.info(f"[{i+1}/12] {sign['name']} 公開完了: {url}")
                 success_count += 1
             else:
-                logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
+                # 下書きとして記録し、次回は作り直さずこの記事の公開をやり直す
+                plog.record_draft(post_type, PERIOD, sign_en, url, title=title, price=price)
+                logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認（下書き保存）: {url}")
                 fail_count += 1
 
         except Exception as e:
