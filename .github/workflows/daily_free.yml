@@ -71,6 +71,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           NOTE_USER_ID: "0928shoki"
           LOG_LEVEL: INFO
         run: python scripts/run_daily_free.py

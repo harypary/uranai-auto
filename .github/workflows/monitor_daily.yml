@@ -14,6 +14,10 @@ jobs:
       actions: write
 
     steps:
+      # 暗号化セッション（data/session/note_session.enc）の期限を見るため
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check latest daily_note run result
         id: check
         env:
@@ -111,12 +115,20 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
         run: |
+          pip install --quiet pynacl
+          # 実際に投稿で使われるセッション（暗号化ファイル優先）の期限を見る。
+          # Secret 側は週次更新で延長されないため、そちらを見ると誤報になる。
           DAYS=$(python3 -c "
-          import base64, json, os, time
-          s = json.loads(base64.b64decode(os.environ['NOTE_SESSION_B64']))
-          exp = [c['expires'] for c in s.get('cookies', []) if c['name'].startswith('_note_session') and c['expires'] > 0]
+          import base64, json, os, sys, time
+          sys.path.insert(0, '.')
+          from src.publishers import session_store
+          s = session_store.load_encrypted()
+          if not s and os.environ.get('NOTE_SESSION_B64'):
+              s = json.loads(base64.b64decode(os.environ['NOTE_SESSION_B64']))
+          exp = [c['expires'] for c in (s or {}).get('cookies', []) if c['name'].startswith('_note_session') and c['expires'] > 0]
           print(int((min(exp) - time.time()) // 86400) if exp else -1)
           ")
           echo "noteセッション残り日数: $DAYS"
@@ -139,8 +151,12 @@ jobs:
             --title "noteセッションの期限が残り${DAYS}日です" \
             --body "期限が切れると全ての自動投稿が止まります。
 
-          復旧手順（どちらか）:
-          1. Actions の「Renew note.com Session」を手動実行（成功すれば NOTE_SESSION_B64 が自動更新されます）
-          2. 失敗する場合はPCで python scripts/setup_note_session.py を実行し、NOTE_SESSION_B64 を更新
+          通常は週次の「note セッション維持」がアクセスのたびに期限を延ばすため、ここまで減るのは
+          その週次実行が失敗し続けている場合です。まず Actions で直近の実行結果を確認してください。
+
+          復旧手順:
+          1. Actions の「note セッション維持」を手動実行して成功すれば完了
+          2. 失敗する場合はPCで python scripts/setup_note_session.py を実行し、
+             暗号化セッション（data/session/note_session.enc）を push する
 
           更新後にこのIssueをクローズしてください。"

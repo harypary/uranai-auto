@@ -2,11 +2,11 @@
 note.com セッション有効性チェック。
 exit 0: 有効  /  exit 1: 期限切れ or 未ログイン
 
-GitHub Actions の daily_note.yml から呼ばれる。
-失敗時に自動で renew_note_session.py を呼ぶためのゲートとして機能する。
+各投稿ワークフローの冒頭から呼ばれ、ログに「投稿前のセッション状態」を残す。
+期限切れだった場合は週次の refresh_note_session.py でも復旧できないため、
+ローカルで setup_note_session.py を実行して暗号化セッションを push する必要がある。
 """
 
-import json
 import os
 import sys
 import time
@@ -18,14 +18,17 @@ load_dotenv()
 
 
 def load_session() -> dict:
-    b64 = os.environ.get("NOTE_SESSION_B64", "").strip()
-    if b64:
-        import base64
-        return json.loads(base64.b64decode(b64).decode("utf-8"))
-    session_file = Path("output/note_session.json")
-    if session_file.exists():
-        return json.loads(session_file.read_text(encoding="utf-8"))
-    return {}
+    """投稿時とまったく同じ経路で読む（暗号化ファイル → 環境変数 → ローカルファイル）。
+
+    ここだけ Secret しか見ないと、延長済みの暗号化セッションが有効でも
+    「期限切れ」と誤判定してしまう。
+    """
+    from src.publishers.note_publisher import NotePublisher
+
+    try:
+        return NotePublisher()._load_session() or {}
+    except FileNotFoundError:
+        return {}
 
 
 def check_session(storage_state: dict) -> bool:

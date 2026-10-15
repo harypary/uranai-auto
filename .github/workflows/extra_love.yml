@@ -66,29 +66,18 @@ jobs:
         id: session_check
         env:
           NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
         run: |
           python scripts/check_session.py && echo "session_ok=true" >> $GITHUB_OUTPUT \
             || echo "session_ok=false" >> $GITHUB_OUTPUT
-
-      - name: Renew session if expired
-        if: steps.session_check.outputs.session_ok == 'false'
-        continue-on-error: true
-        env:
-          NOTE_EMAIL:    ${{ secrets.NOTE_EMAIL }}
-          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
-          GH_PAT:        ${{ secrets.GH_PAT }}
-          GITHUB_REPO:   ${{ github.repository }}
-        run: |
-          python scripts/renew_note_session.py
-          SESSION_B64=$(python -c "import base64; print(base64.b64encode(open('output/note_session.json','rb').read()).decode())")
-          echo "NOTE_SESSION_B64=$SESSION_B64" >> $GITHUB_ENV
 
       - name: Post love note (attempt 1/3)
         id: post_1
         continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           NOTE_USER_ID: "0928shoki"
           CONCERN_GROUP: love
           CONCERN_THEME: ${{ github.event.inputs.theme }}
@@ -101,7 +90,8 @@ jobs:
         continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           NOTE_USER_ID: "0928shoki"
           CONCERN_GROUP: love
           CONCERN_THEME: ${{ github.event.inputs.theme }}
@@ -115,7 +105,8 @@ jobs:
         if: steps.post_2.outcome == 'failure'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NOTE_SESSION_B64: ${{ env.NOTE_SESSION_B64 || secrets.NOTE_SESSION_B64 }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
           NOTE_USER_ID: "0928shoki"
           CONCERN_GROUP: love
           CONCERN_THEME: ${{ github.event.inputs.theme }}
