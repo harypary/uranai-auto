@@ -8,6 +8,7 @@ from typing import Optional
 
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 
+from src.publishers import session_store
 from src.utils.logger import get_logger
 
 logger = get_logger("note_publisher")
@@ -21,6 +22,31 @@ SESSION_FILE = Path(__file__).parent.parent.parent / "output" / "note_session.js
 
 # 投稿間隔（秒）- Bot検出対策
 POST_INTERVAL = 35
+
+
+def is_logged_in(context) -> bool:
+    """API でログイン状態を確認する（画面の作りが変わっても影響を受けない）"""
+    resp = context.request.get(f"{NOTE_BASE_URL}/api/v2/current_user")
+    if resp.status != 200:
+        return False
+    try:
+        return bool(resp.json().get("data"))
+    except Exception:
+        return False
+
+
+def persist_session(state: dict) -> None:
+    """アクセスで延長されたセッションを保存する。
+
+    note のセッション Cookie は約3か月有効で、アクセスのたびに期限が延びる。
+    SESSION_KEY があれば暗号化ファイル（ワークフローがコミットする）に保存し、
+    ローカル実行では output/note_session.json も更新する。
+    """
+    if session_store.save_encrypted(state):
+        logger.info("セッションを暗号化して保存しました（有効期限を延長）")
+    if not os.environ.get("GITHUB_ACTIONS"):
+        SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 class NotePublisher:
@@ -439,7 +465,12 @@ class NotePublisher:
     # ──────────────────────────────────────────────────────────
 
     def _load_session(self) -> dict:
-        """セッションファイルを読み込む"""
+        """セッションを読み込む（暗号化ファイル → 環境変数 → ローカルファイルの順）"""
+        state = session_store.load_encrypted()
+        if state:
+            logger.info("リポジトリの暗号化セッションを読み込みました")
+            return state
+
         session_b64 = os.environ.get("NOTE_SESSION_B64")
         if session_b64:
             import base64
@@ -466,9 +497,9 @@ class NotePublisher:
         _wait(2)
         self._dismiss_modals(page)
 
-        is_logged_in = page.query_selector('[data-testid="user-icon"], .o-header__userIcon, a[href*="/settings"]')
-        if is_logged_in:
+        if is_logged_in(page.context):
             logger.info("セッション有効 - ログイン済み")
+            persist_session(page.context.storage_state())
         else:
             logger.warning("セッションが期限切れの可能性があります。scripts/setup_note_session.py を再実行してください。")
 

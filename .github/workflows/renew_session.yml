@@ -1,42 +1,53 @@
-name: Renew note.com Session（毎週日曜 5:00 JST）
+name: note セッション維持（毎週日曜 5:00 JST）
+
+# note のセッションは約3か月有効で、アクセスのたびに期限が延びる。
+# 毎週アクセスして、延長されたセッションを暗号化してコミットする。
+# ログイン画面に reCAPTCHA があるため、パスワードでの自動ログインは行わない。
+# 失敗した場合（セッション切れ）は GitHub から通知が届くので、
+# ローカルで python scripts/setup_note_session.py を実行して新しいセッションを push する。
 
 on:
   schedule:
-    # 毎週日曜 5:00 JST = 前日20:00 UTC。月1回だとセッション切れの空白が
-    # 最大1ヶ月生まれ、その間の投稿が全停止するため毎週更新する。
     - cron: '0 20 * * 6'
-  workflow_dispatch:  # 手動実行も可能
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  renew:
+  refresh:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
+    env:
+      TZ: Asia/Tokyo
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Install Playwright and browsers
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
+      - run: playwright install --with-deps chromium
 
-      - name: Create output directory
-        run: mkdir -p output
-
-      - name: Renew note.com session
+      - name: Refresh note.com session
         env:
-          NOTE_EMAIL:    ${{ secrets.NOTE_EMAIL }}
-          NOTE_PASSWORD: ${{ secrets.NOTE_PASSWORD }}
-          GH_PAT:        ${{ secrets.GH_PAT }}
-          GITHUB_REPO:   ${{ github.repository }}
-        run: python scripts/renew_note_session.py
+          SESSION_KEY: ${{ secrets.SESSION_KEY }}
+          NOTE_SESSION_B64: ${{ secrets.NOTE_SESSION_B64 }}
+        run: python scripts/refresh_note_session.py
+
+      - name: Commit refreshed session
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/session
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "session: refresh $(date +%F)"
+          for i in 1 2 3 4 5; do
+            if git pull --rebase -X theirs && git push; then exit 0; fi
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 10))
+          done
+          exit 1
