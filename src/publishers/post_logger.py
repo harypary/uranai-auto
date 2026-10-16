@@ -6,6 +6,8 @@ from pathlib import Path
 
 LOG_FILE = Path(__file__).parent.parent.parent / "output" / "post_log.json"
 NOTE_USER_ID = "0928shoki"
+# この回数だけ下書きの公開に失敗したら、その下書きは諦めて新規作成に切り替える
+DRAFT_FAILURE_LIMIT = 2
 
 
 class PostLogger:
@@ -75,6 +77,29 @@ class PostLogger:
         entry["draft_url"] = draft_url
         entry["title"] = title
         entry["price"] = price
+        entry["publish_failures"] = 0  # 別の下書きになったので失敗回数は数え直す
+        self._data[key] = entry
+        self._save()
+
+    def record_draft_failure(self, post_type: str, period: str, sign_en: str) -> int:
+        """下書きの公開失敗を数えて、累計回数を返す。"""
+        key = self._key(post_type, period, sign_en)
+        entry = self._data.get(key, {})
+        entry["publish_failures"] = entry.get("publish_failures", 0) + 1
+        self._data[key] = entry
+        self._save()
+        return entry["publish_failures"]
+
+    def discard_draft(self, post_type: str, period: str, sign_en: str):
+        """公開できない下書きを切り離し、次回は新規作成させる。
+
+        note 側の事情で下書きの公開操作が通らないことがあり、同じ下書きを
+        押し続けると永久に公開されない。記事そのものは作り直せば公開できる。
+        """
+        key = self._key(post_type, period, sign_en)
+        entry = self._data.get(key, {})
+        entry.pop("draft_url", None)
+        entry["publish_failures"] = 0
         self._data[key] = entry
         self._save()
 
@@ -129,6 +154,20 @@ def fetch_published_signs(marker: str, max_pages: int = 8) -> set:
     except Exception as e:
         get_logger("post_logger").warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
     return found
+
+
+def give_up_draft_if_stuck(plog: "PostLogger", post_type: str, period: str, sign_en: str, label: str = "") -> bool:
+    """下書きの公開失敗を数え、上限に達したらその下書きを捨てる。捨てたら True。"""
+    from src.utils.logger import get_logger
+
+    fails = plog.record_draft_failure(post_type, period, sign_en)
+    if fails < DRAFT_FAILURE_LIMIT:
+        return False
+    plog.discard_draft(post_type, period, sign_en)
+    get_logger("post_logger").warning(
+        f"{label} 下書きの公開に{fails}回失敗 → この下書きは諦めて次回は新規作成します"
+    )
+    return True
 
 
 def published_url_if_live(note_key: str) -> str | None:

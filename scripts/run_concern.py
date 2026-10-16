@@ -34,6 +34,7 @@ from src.publishers.note_publisher import NotePublisher
 from src.publishers.post_logger import (
     PostLogger,
     fetch_published_signs,
+    give_up_draft_if_stuck,
     infer_published,
     published_url_if_live,
 )
@@ -131,9 +132,11 @@ def main():
                     success_count += 1
                 else:
                     logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
+                    give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
                     fail_count += 1
             except Exception as e:
                 logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
+                give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
                 fail_count += 1
             if i < len(ZODIAC_SIGNS) - 1:
                 time.sleep(POST_INTERVAL)

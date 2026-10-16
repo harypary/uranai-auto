@@ -22,7 +22,13 @@ from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator, generate_daily_title
 from src.publishers.note_publisher import NotePublisher
 from src.publishers.image_generator import CoverImageGenerator
-from src.publishers.post_logger import PostLogger, fetch_published_signs, infer_published, period_for
+from src.publishers.post_logger import (
+    PostLogger,
+    fetch_published_signs,
+    give_up_draft_if_stuck,
+    infer_published,
+    period_for,
+)
 from src.utils.astrology_data import ZODIAC_SIGNS
 from src.utils.date_utils import get_date_str
 from src.utils.logger import get_logger
@@ -125,6 +131,9 @@ def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str |
         if infer_published(url):
             plog.record_published(POST_TYPE, period, sign_en, url)
             return url
+        # note側の事情で公開操作が通らない下書きがある。押し続けても公開されないため、
+        # 一定回数で諦めて次回は新規作成に切り替える（記事を作り直せば公開できる）
+        give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
         return None
 
     # 新規投稿（生成済みキャッシュがあれば再生成せずquotaを節約）

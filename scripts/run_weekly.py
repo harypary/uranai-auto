@@ -22,7 +22,13 @@ from src.content.gemini_client import GeminiClient
 from src.content.horoscope_generator import HoroscopeGenerator, generate_weekly_title
 from src.publishers.note_publisher import NotePublisher
 from src.publishers.image_generator import CoverImageGenerator
-from src.publishers.post_logger import PostLogger, fetch_published_signs, infer_published, period_for
+from src.publishers.post_logger import (
+    PostLogger,
+    fetch_published_signs,
+    give_up_draft_if_stuck,
+    infer_published,
+    period_for,
+)
 from src.utils.astrology_data import ZODIAC_SIGNS
 from src.utils.date_utils import get_week_range, get_week_range_str, get_week_label
 from src.utils.logger import get_logger
@@ -94,9 +100,11 @@ def main():
                         first_url = url
                 else:
                     logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
+                    give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
                     fail_count += 1
             except Exception as e:
                 logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
+                give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
                 fail_count += 1
 
             if i < len(ZODIAC_SIGNS) - 1:
