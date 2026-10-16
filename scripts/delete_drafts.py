@@ -49,13 +49,15 @@ def load_session() -> dict:
 
 def fetch_all_drafts(page) -> list[dict]:
     """note.com API で全下書きを取得（note_list/contents エンドポイント使用）"""
+    # per_page は無視され1ページ20件に丸められるため limit を使う。
+    # これを取り違えると下書きの一部しか見えない（925件中129件しか取れていなかった）。
     all_notes = []
     p = 1
-    while True:
+    while p <= 200:
         result = page.evaluate(f"""
             async () => {{
                 const r = await fetch(
-                    'https://note.com/api/v2/note_list/contents?page={p}&per_page=50',
+                    'https://note.com/api/v2/note_list/contents?limit=100&page={p}',
                     {{credentials: 'include'}}
                 );
                 if (!r.ok) return null;
