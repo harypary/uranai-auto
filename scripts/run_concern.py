@@ -34,6 +34,7 @@ from src.publishers.note_publisher import NotePublisher
 from src.publishers.post_logger import (
     PostLogger,
     fetch_published_signs,
+    draft_live_after_wait,
     give_up_draft_if_stuck,
     infer_published,
     published_url_if_live,
@@ -124,6 +125,7 @@ def main():
                 plog.record_published(post_type, PERIOD, sign_en, live)
                 success_count += 1
                 continue
+            gave_up = False
             try:
                 logger.info(f"[{i+1}/12] {sign['name']} 下書きから公開: {draft_url}")
                 url = note.publish_existing_draft(draft_url, price=price, hashtags=hashtags)
@@ -132,15 +134,25 @@ def main():
                     success_count += 1
                 else:
                     logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
-                    give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
-                    fail_count += 1
+                    gave_up = give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
+                    if not gave_up:
+                        fail_count += 1
             except Exception as e:
                 logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
-                give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
-                fail_count += 1
-            if i < len(ZODIAC_SIGNS) - 1:
-                time.sleep(POST_INTERVAL)
-            continue
+                gave_up = give_up_draft_if_stuck(plog, post_type, PERIOD, sign_en, sign["name"])
+                if not gave_up:
+                    fail_count += 1
+
+            # 下書きを諦めたら、次の実行を待たずにこの場で新規作成へ進む
+            live = draft_live_after_wait(draft_url) if gave_up else None
+            if live:
+                plog.record_published(post_type, PERIOD, sign_en, live)
+                success_count += 1
+            if not gave_up or live:
+                if i < len(ZODIAC_SIGNS) - 1:
+                    time.sleep(POST_INTERVAL)
+                continue
+            logger.info(f"[{i+1}/12] {sign['name']} 下書きを諦め、この場で新規作成に切り替えます")
 
         try:
             logger.info(f"[{i+1}/12] {sign['name']} 処理開始...")

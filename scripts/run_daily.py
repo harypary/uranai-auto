@@ -25,6 +25,7 @@ from src.publishers.image_generator import CoverImageGenerator
 from src.publishers.post_logger import (
     PostLogger,
     fetch_published_signs,
+    draft_live_after_wait,
     give_up_draft_if_stuck,
     infer_published,
     period_for,
@@ -132,9 +133,16 @@ def _post_one_sign(sign, today, generator, note, img_gen, plog, period) -> str |
             plog.record_published(POST_TYPE, period, sign_en, url)
             return url
         # note側の事情で公開操作が通らない下書きがある。押し続けても公開されないため、
-        # 一定回数で諦めて次回は新規作成に切り替える（記事を作り直せば公開できる）
-        give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
-        return None
+        # 一定回数で諦め、その場で新規作成に切り替える（記事を作り直せば公開できる）。
+        # 次の実行を待つと、その日最後の実行で詰まった星座が欠けてしまう。
+        if not give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"]):
+            return None
+        live = draft_live_after_wait(draft_url)
+        if live:
+            logger.info(f"  諦めた下書きが公開されていた: {live}")
+            plog.record_published(POST_TYPE, period, sign_en, live)
+            return live
+        logger.info("  下書きを諦め、この場で新規作成に切り替えます")
 
     # 新規投稿（生成済みキャッシュがあれば再生成せずquotaを節約）
     date_str = get_date_str(today)

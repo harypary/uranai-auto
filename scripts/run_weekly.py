@@ -25,6 +25,7 @@ from src.publishers.image_generator import CoverImageGenerator
 from src.publishers.post_logger import (
     PostLogger,
     fetch_published_signs,
+    draft_live_after_wait,
     give_up_draft_if_stuck,
     infer_published,
     period_for,
@@ -89,6 +90,7 @@ def main():
         draft_url = plog.get_draft_url(POST_TYPE, period, sign_en)
         if draft_url:
             logger.info(f"[{i+1}/12] {sign['name']} → 下書き発見、公開フローを実行: {draft_url}")
+            gave_up = False
             try:
                 price = plog.get_price(POST_TYPE, period, sign_en) or PRICE
                 url = note.publish_existing_draft(draft_url, price=price, hashtags=hashtags)
@@ -100,16 +102,25 @@ def main():
                         first_url = url
                 else:
                     logger.warning(f"[{i+1}/12] {sign['name']} 公開未確認: {url}")
-                    give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
-                    fail_count += 1
+                    gave_up = give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
+                    if not gave_up:
+                        fail_count += 1
             except Exception as e:
                 logger.error(f"[{i+1}/12] {sign['name']} 下書き公開失敗: {e}")
-                give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
-                fail_count += 1
+                gave_up = give_up_draft_if_stuck(plog, POST_TYPE, period, sign_en, sign["name"])
+                if not gave_up:
+                    fail_count += 1
 
-            if i < len(ZODIAC_SIGNS) - 1:
-                time.sleep(POST_INTERVAL)
-            continue
+            # 下書きを諦めたら、次の実行を待たずにこの場で新規作成へ進む
+            live = draft_live_after_wait(draft_url) if gave_up else None
+            if live:
+                plog.record_published(POST_TYPE, period, sign_en, live)
+                success_count += 1
+            if not gave_up or live:
+                if i < len(ZODIAC_SIGNS) - 1:
+                    time.sleep(POST_INTERVAL)
+                continue
+            logger.info(f"[{i+1}/12] {sign['name']} 下書きを諦め、この場で新規作成に切り替えます")
 
         # ── 新規投稿（生成済みキャッシュがあれば再生成せずquotaを節約）──
         try:

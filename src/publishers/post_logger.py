@@ -91,7 +91,7 @@ class PostLogger:
         return entry["publish_failures"]
 
     def discard_draft(self, post_type: str, period: str, sign_en: str):
-        """公開できない下書きを切り離し、次回は新規作成させる。
+        """公開できない下書きを切り離し、新規作成に切り替えさせる。
 
         note 側の事情で下書きの公開操作が通らないことがあり、同じ下書きを
         押し続けると永久に公開されない。記事そのものは作り直せば公開できる。
@@ -165,9 +165,24 @@ def give_up_draft_if_stuck(plog: "PostLogger", post_type: str, period: str, sign
         return False
     plog.discard_draft(post_type, period, sign_en)
     get_logger("post_logger").warning(
-        f"{label} 下書きの公開に{fails}回失敗 → この下書きは諦めて次回は新規作成します"
+        f"{label} 下書きの公開に{fails}回失敗 → この下書きは諦めて新規作成に切り替えます"
     )
     return True
+
+
+def draft_live_after_wait(draft_url: str, wait_seconds: int = 30) -> str | None:
+    """諦めた下書きが実は公開されていないか、少し待ってから確かめる。
+
+    公開直後は404が返ることがあるため、すぐ新規作成すると二重投稿になる。
+    """
+    import re
+    import time
+
+    m = re.search(r"/notes/(n[a-f0-9]+)", draft_url or "")
+    if not m:
+        return None
+    time.sleep(wait_seconds)
+    return published_url_if_live(m.group(1))
 
 
 def published_url_if_live(note_key: str) -> str | None:
