@@ -125,11 +125,90 @@ def fetch_published_signs(marker: str, max_pages: int = 8) -> set:
     post_log は Actions キャッシュ管理のため並走・復元失敗で空になり二重投稿を招く。
     note.com 本体を正として重複を防ぐ。
     """
+    return set(fetch_published_sign_urls(marker, max_pages))
+
+
+_contents_cache: dict = {}
+
+
+def _load_session_state() -> dict | None:
+    """投稿と同じ優先順でセッションを読む（暗号化ファイル → 環境変数 → ローカルファイル）。"""
+    import base64
+    import os
+
+    try:
+        from src.publishers import session_store
+        state = session_store.load_encrypted()
+        if state:
+            return state
+    except Exception:
+        pass
+    b64 = os.environ.get("NOTE_SESSION_B64", "").strip()
+    if b64:
+        return json.loads(base64.b64decode(b64).decode("utf-8"))
+    local = LOG_FILE.parent / "note_session.json"
+    if local.exists():
+        return json.loads(local.read_text(encoding="utf-8"))
+    return None
+
+
+def _all_published_via_login() -> list | None:
+    """ログイン済みAPIで全公開記事の (タイトル, key) を取得する。失敗したら None。
+
+    公開APIは1ページ6件しか返さず、全件を見るには数百ページ・数分かかる。
+    途中で打ち切ると古いテーマを「未投稿」と誤判定し、丸ごと重複投稿してしまう。
+    """
     import requests
-    from src.utils.astrology_data import ZODIAC_SIGNS
+
+    state = _load_session_state()
+    if not state:
+        return None
+    s = requests.Session()
+    for c in state.get("cookies", []):
+        if "note.com" in c.get("domain", ""):
+            s.cookies.set(c["name"], c["value"], domain=c["domain"], path=c.get("path", "/"))
+    items = []
+    try:
+        for page in range(1, 200):
+            r = s.get(
+                "https://note.com/api/v2/note_list/contents",
+                params={"limit": 100, "page": page},
+                headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest",
+                         "Accept": "application/json"},
+                timeout=20,
+            )
+            if r.status_code != 200:
+                return None
+            data = r.json().get("data", {})
+            notes = data.get("notes") or []
+            items += [(n.get("name") or "", n.get("key") or "") for n in notes if n.get("status") == "published"]
+            if data.get("isLastPage") or not notes:
+                break
+    except Exception:
+        return None
+    return items
+
+
+def _creator_contents(max_pages: int) -> list:
+    """公開記事の (タイトル, key) を新しい順に取得する。
+
+    まずログイン済みAPIで全件を取り、だめなら公開APIで max_pages まで読む。
+    同じ実行の中で複数テーマを確かめるため、1回の取得結果を使い回す。
+    """
+    import requests
     from src.utils.logger import get_logger
 
-    found = set()
+    if "all" in _contents_cache:
+        return _contents_cache["all"]
+    full = _all_published_via_login()
+    if full:
+        _contents_cache["all"] = full
+        return full
+
+    for depth, items in _contents_cache.items():
+        if depth >= max_pages:
+            return items
+    items = []
     try:
         for page in range(1, max_pages + 1):
             r = requests.get(
@@ -141,18 +220,28 @@ def fetch_published_signs(marker: str, max_pages: int = 8) -> set:
                 break
             data = r.json().get("data", {})
             contents = data.get("contents", [])
-            for n in contents:
-                title = n.get("name", "")
-                if marker not in title:
-                    continue
-                for s in ZODIAC_SIGNS:
-                    if s["name"] in title:
-                        found.add(s["en"])
-                        break
+            items += [(n.get("name", ""), n.get("key", "")) for n in contents]
             if data.get("isLastPage") or not contents:
                 break
     except Exception as e:
         get_logger("post_logger").warning(f"note.com の公開済み記事確認に失敗: {e}（post_logのみで判定します）")
+        return items
+    _contents_cache[max_pages] = items
+    return items
+
+
+def fetch_published_sign_urls(marker: str, max_pages: int = 8) -> dict:
+    """fetch_published_signs と同じ判定で、{星座(en): 公開URL} を返す。"""
+    from src.utils.astrology_data import ZODIAC_SIGNS
+
+    found = {}
+    for title, key in _creator_contents(max_pages):
+        if marker not in title:
+            continue
+        for s in ZODIAC_SIGNS:
+            if s["name"] in title:
+                found.setdefault(s["en"], f"https://note.com/{NOTE_USER_ID}/n/{key}")
+                break
     return found
 
 

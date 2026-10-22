@@ -33,8 +33,9 @@ from src.content.concern_theme_generator import generate_new_theme
 from src.publishers.note_publisher import NotePublisher
 from src.publishers.post_logger import (
     PostLogger,
-    fetch_published_signs,
     draft_live_after_wait,
+    fetch_published_sign_urls,
+    fetch_published_signs,
     give_up_draft_if_stuck,
     infer_published,
     published_url_if_live,
@@ -48,11 +49,28 @@ POST_INTERVAL = 40
 PERIOD = "permanent"  # 常設記事なので固定（再実行時は公開済みをスキップ）
 
 
+NOTE_SCAN_PAGES = 80  # 常設記事は数週間前の投稿も見る必要がある
+
+
 def _has_remaining_signs(plog: PostLogger, theme: dict) -> bool:
+    """未公開の星座が残っているか。post_log が未完了と言うときだけ note.com で確かめる。
+
+    post_log は Actions キャッシュ依存で記録が欠けることがあり、それだけで判定すると
+    既に12星座そろったテーマを毎回選び、全部スキップして0本で「成功」になる。
+    note.com で見つかった公開済みの星座は post_log にも書き戻してずれを解消する。
+    """
     post_type = f"concern_{theme['key']}"
-    return any(
-        not plog.is_published(post_type, PERIOD, s["en"]) for s in ZODIAC_SIGNS
-    )
+    missing = [s["en"] for s in ZODIAC_SIGNS if not plog.is_published(post_type, PERIOD, s["en"])]
+    if not missing:
+        return False
+    on_note = fetch_published_sign_urls(theme["title"], max_pages=NOTE_SCAN_PAGES)
+    for sign_en in missing:
+        if sign_en in on_note:
+            plog.record_published(post_type, PERIOD, sign_en, on_note[sign_en])
+    remaining = [s for s in missing if s not in on_note]
+    if not remaining:
+        logger.info(f"テーマ「{theme['title'][:30]}」は note 上で12星座公開済み → 次のテーマへ")
+    return bool(remaining)
 
 
 def _select_theme(plog: PostLogger, gemini: GeminiClient, group: str) -> dict:
@@ -101,7 +119,7 @@ def main():
 
     # post_log は Actions キャッシュ依存で欠落しうる。note.com 本体を正として
     # 同じテーマの記事が既にある星座を除外する（常設記事なので全期間を深く見る）
-    already_on_note = fetch_published_signs(theme["title"], max_pages=30)
+    already_on_note = fetch_published_signs(theme["title"], max_pages=NOTE_SCAN_PAGES)
     if already_on_note:
         logger.info(f"note.comで公開済みの星座: {len(already_on_note)}件")
 
