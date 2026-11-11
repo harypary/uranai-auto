@@ -11,6 +11,13 @@ on:
         required: false
         default: ''
 
+# 高単価3枠（水・金・日）はテーマ一覧と投稿ログを同じキャッシュで受け渡すため、
+# 並走すると後から始まった方が古い一覧を読み、終了時に上書きしてテーマが消える。
+# 主cronとバックアップcronも含め、常に1本ずつ順番に走らせる。
+concurrency:
+  group: concern-note
+  cancel-in-progress: false
+
 jobs:
   post-concern-note:
     runs-on: ubuntu-latest

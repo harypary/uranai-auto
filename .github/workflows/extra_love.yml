@@ -11,8 +11,9 @@ on:
         required: false
         default: ''
 
+# 水曜・金曜の悩み特化とテーマ一覧のキャッシュを共有するため、同じグループで直列化する
 concurrency:
-  group: love-note
+  group: concern-note
   cancel-in-progress: false
 
 jobs:
